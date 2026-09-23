@@ -216,3 +216,30 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+.aws/
+*.pem
+*.key
+
+# Frontend and browser test output
+node_modules/
+dist/
+playwright-report/
+test-results/
+
+# Private runtime documents and generated output
+var/
+private-data/
+evaluation/runs/
+
+# Terraform local state and credentials
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
