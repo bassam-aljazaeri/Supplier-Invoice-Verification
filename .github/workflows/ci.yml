@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, feat/local-foundation]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Test status requests and recovery
+        run: npm test
+      - name: Build production frontend
+        run: npm run build
+
+  backend:
+    name: Backend checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      COMPOSE_PROJECT_NAME: siv-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      COMPOSE_FILE: compose.yaml:compose.ci.yaml
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Generate disposable database settings
+        run: |
+          python3 - <<'PY'
+          import os
+          import secrets
+          from pathlib import Path
+
+          password = secrets.token_hex(32)
+          print(f"::add-mask::{password}")
+          settings = (
+              "POSTGRES_DB=siv_ci\n"
+              "POSTGRES_USER=siv_ci\n"
+              f"POSTGRES_PASSWORD={password}\n"
+          )
+          Path(os.environ["RUNNER_TEMP"], "siv-ci.env").write_text(settings, encoding="utf-8")
+          PY
+      - name: Validate Compose configuration
+        run: docker compose --env-file "$RUNNER_TEMP/siv-ci.env" config --quiet
+      - name: Build and start disposable services
+        timeout-minutes: 8
+        run: docker compose --env-file "$RUNNER_TEMP/siv-ci.env" up --build --detach --wait --wait-timeout 90
+      - name: Wait for and verify real health and readiness
+        timeout-minutes: 2
+        run: docker compose --env-file "$RUNNER_TEMP/siv-ci.env" exec -T api python scripts/check_endpoints.py --timeout 60
+      - name: Run backend tests in Linux API container
+        timeout-minutes: 2
+        run: docker compose --env-file "$RUNNER_TEMP/siv-ci.env" exec -T api pytest -q
+      - name: Verify health stays available when dependencies stop
+        timeout-minutes: 2
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/siv-ci.env" stop --timeout 10 db redis
+          docker compose --env-file "$RUNNER_TEMP/siv-ci.env" exec -T api python scripts/check_endpoints.py --expect-unavailable --timeout 60
+      - name: Verify readiness recovers after dependencies restart
+        timeout-minutes: 2
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/siv-ci.env" start db redis
+          docker compose --env-file "$RUNNER_TEMP/siv-ci.env" exec -T api python scripts/check_endpoints.py --timeout 60
+      - name: Show service logs on failure
+        if: ${{ failure() }}
+        timeout-minutes: 1
+        run: |
+          if [[ -f "$RUNNER_TEMP/siv-ci.env" ]]; then
+            docker compose --env-file "$RUNNER_TEMP/siv-ci.env" ps --all
+            docker compose --env-file "$RUNNER_TEMP/siv-ci.env" logs --no-color --tail 200
+          fi
+      - name: Clean up disposable containers and volumes
+        if: ${{ always() }}
+        timeout-minutes: 2
+        run: |
+          if [[ -f "$RUNNER_TEMP/siv-ci.env" ]]; then
+            docker compose --env-file "$RUNNER_TEMP/siv-ci.env" down --volumes --remove-orphans --timeout 10
+            rm -f -- "$RUNNER_TEMP/siv-ci.env"
+          fi

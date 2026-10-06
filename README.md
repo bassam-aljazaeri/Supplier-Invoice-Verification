@@ -72,3 +72,58 @@ The tests use Node.js 24's built-in TypeScript support and test runner, with
 simulated failed requests and recovery. Keep `package-lock.json` in version
 control; `node_modules` and `dist` are ignored. The `/api` proxy is for the
 Vite development server; the production build needs its own API routing.
+
+## Automated checks (Step 2C)
+
+`.github/workflows/ci.yml` runs for pull requests targeting `main` and pushes
+to `main` or `feat/local-foundation`. Both jobs use GitHub-hosted Ubuntu 24.04
+runners and `contents: read` permissions. Checkout does not retain credentials.
+The official checkout and setup-node actions are pinned to verified release
+commits ([checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1)
+and [setup-node v7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0)).
+
+The frontend job installs with Node.js 24 and `npm ci`, then runs lint,
+the status request tests, and the production build. The backend job builds
+the existing Dockerfile, which uses `uv sync --locked` with `backend/uv.lock`.
+It combines `compose.yaml` and `compose.ci.yaml`, generates temporary database
+settings on the runner, and uses a unique Compose project name for each run
+and attempt. The CI override removes the API host port and source mount;
+checks use real HTTP inside the Linux API container.
+
+Compose startup waits at most 90 seconds for running/healthy services.
+The HTTP checker has a 60-second budget and verifies both status codes and
+complete JSON results. After pytest, the backend job stops its PostgreSQL and
+Redis containers, checks that `/health` remains HTTP 200 while `/ready` reports
+HTTP 503 with both dependencies unavailable, and restarts them to check recovery.
+Failure logs are printed, and an `always()` cleanup step removes the project's
+containers, network, volumes, and temporary environment file. Job and step time
+limits provide additional bounds. No repository secrets, AWS access, paid APIs,
+or deployment permissions are used.
+
+To repeat the checks locally, run these **Windows host PowerShell commands**
+from the project directory. Stop a running Vite server before `npm ci` so
+Windows can replace its native modules.
+
+```powershell
+Set-Location frontend
+npm.cmd ci --no-audit --no-fund
+npm.cmd run lint
+npm.cmd test
+npm.cmd run build
+Set-Location ..
+.\scripts\check-backend.ps1
+```
+
+The backend script creates its own temporary database settings and unique
+Compose project, prints logs on failure, and cleans up in a `finally` block.
+It runs `pytest -q` and `python scripts/check_endpoints.py` **inside the Linux
+API container**. It uses no published API port, so an existing development
+stack can remain running. It deletes only its disposable project's volumes.
+Docker Desktop with Linux containers and Compose 2.24.4 or newer are required
+for the CI override tags. Both committed dependency lockfiles remain in use.
+
+Local checks evaluate the current Windows working files and Docker Desktop
+containers. GitHub Actions evaluates the submitted commit on fresh Ubuntu
+virtual machines, installs its own dependencies, and attaches check results to
+the push or pull request. Local success is recorded in `docs/progress.md`;
+**GitHub CI remains pending until an online run is verified**.
