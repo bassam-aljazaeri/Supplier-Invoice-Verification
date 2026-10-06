@@ -1,7 +1,7 @@
 # Progress
 
-Current milestone: 2 - Local foundation
-Current task: Step 2C - automated checks (implemented; GitHub verification pending)
+Current milestone: 2 - Local foundation (validation complete)
+Current task: Final documentation update and pull-request merge
 
 Completed:
 - Defined the first-release scope
@@ -68,12 +68,20 @@ Step 2C decisions:
 - Preserve the existing unit test proving health never contacts either dependency; add HTTP checker failure tests
 
 Step 2C limitations and corrections:
-- GitHub CI: PENDING until the user verifies an online run; no commit, push, merge, deployment, or Step 3 work performed
+- GitHub CI verified on 2026-10-07: pull-request run #4 passed both Backend checks and Frontend checks.
+- Initial CI runs failed because required CI files were not committed. Committing the Compose override, endpoint checker, Dockerfile change, and local verification script resolved the failure.
+- No deployment or Step 3 implementation has been performed.
 - Direct frontend `npm ci` initially failed because Windows locked a native Vite module; a clean temporary install succeeded, and missing local dependencies were restored with matching native binaries
 - The first real outage check timed out with a three-second per-request cap; allowing each HTTP request its remaining 60-second overall budget fixed the check, and the full backend rerun passed
 - Pytest passed with one Starlette TestClient/httpx deprecation warning from the committed dependencies; lockfiles were not changed
 
+Step 2 manual verification (user confirmed):
+- Browser displayed Supplier-Invoice-Verification and the API, PostgreSQL, and Redis status.
+- Stopping PostgreSQL made readiness fail; restarting it restored readiness.
+- Backend tests, frontend lint, and frontend production build passed.
+
 Next task:
-- User verifies the Step 2C workflow online before advancing; remain in Milestone 2
+- Commit this validation record, confirm the updated pull-request checks pass, and merge Milestone 2.
+- Review the skills and tools required for Milestone 3 before starting implementation.
 
 Blockers: None recorded.
