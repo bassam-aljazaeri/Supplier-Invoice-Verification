@@ -1,0 +1,6 @@
+# Combine with compose.yaml using an explicit, unique project name.
+# CI checks HTTP inside the API container, so no host port is needed.
+services:
+  api:
+    ports: !reset []
+    volumes: !reset []
