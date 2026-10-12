@@ -1,7 +1,7 @@
 # Windows host commands; exec commands run Python/pytest in the Linux API container.
 $ErrorActionPreference = 'Stop'
 $backendCheckRoot = Split-Path -Parent $PSScriptRoot
-$backendCheckProject = 'siv-check-' + [Guid]::NewGuid().ToString('N')
+$backendCheckProject = 'supplier-invoice-verification-check-' + [Guid]::NewGuid().ToString('N')
 $backendCheckEnvFile = Join-Path ([System.IO.Path]::GetTempPath()) ($backendCheckProject + '.env')
 $backendCheckPassword = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
 $backendCheckArguments = @(
@@ -13,8 +13,8 @@ $backendCheckArguments = @(
 )
 $backendCheckSavedEnvironment = @{}
 $backendCheckSettings = @{
-    POSTGRES_DB = 'siv_ci'
-    POSTGRES_USER = 'siv_ci'
+    POSTGRES_DB = 'supplier_invoice_verification_test'
+    POSTGRES_USER = 'supplier_invoice_verification_test'
     POSTGRES_PASSWORD = $backendCheckPassword
 }
 $backendCheckFailed = $false
@@ -34,8 +34,8 @@ try {
         [Environment]::SetEnvironmentVariable($backendCheckKey, $backendCheckSettings[$backendCheckKey], 'Process')
     }
     $backendCheckEnvContents = @(
-        'POSTGRES_DB=siv_ci'
-        'POSTGRES_USER=siv_ci'
+        'POSTGRES_DB=supplier_invoice_verification_test'
+        'POSTGRES_USER=supplier_invoice_verification_test'
         "POSTGRES_PASSWORD=$backendCheckPassword"
     )
     Set-Content -LiteralPath $backendCheckEnvFile -Value $backendCheckEnvContents -Encoding ASCII
@@ -43,7 +43,13 @@ try {
     Invoke-BackendCheckCompose -CheckArguments @('config', '--quiet')
     Invoke-BackendCheckCompose -CheckArguments @('up', '--build', '--detach', '--wait', '--wait-timeout', '90')
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', 'scripts/check_endpoints.py', '--timeout', '60')
-    Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'pytest', '-q')
+    # Opt-in exists only on these exec processes, not on the ordinary API service.
+    $backendCheckTestExec = @('exec', '-T', '-e', 'RUN_POSTGRES_TESTS=1', '-e', "POSTGRES_TEST_PROJECT=$backendCheckProject", 'api')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_schema', 'prepare'))
+    Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'alembic', 'upgrade', 'head')
+    Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'alembic', 'current')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_schema', 'verify'))
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('pytest', '-q'))
     Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '10', 'db', 'redis')
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', 'scripts/check_endpoints.py', '--expect-unavailable', '--timeout', '60')
     Invoke-BackendCheckCompose -CheckArguments @('start', 'db', 'redis')

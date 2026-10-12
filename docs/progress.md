@@ -1,7 +1,7 @@
 # Progress
 
 Current milestone: 3 - Manual business records
-Current task: Step 3.1 - Repository inspection and manual workflow blueprint (in progress)
+Current task: Step 3.3 - supplier and purchase-order APIs (not started)
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -20,6 +20,8 @@ Completed:
 - Added real HTTP health/readiness, dependency outage, and recovery checks
 - Added a PowerShell command to reproduce the disposable backend checks locally
 - Completed Milestone 2 - Local foundation
+- Reviewed the Step 3.1 manual-workflow blueprint as the implementation contract
+- Completed Step 3.2 database/session foundation and disposable PostgreSQL schema verification
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -112,8 +114,59 @@ Step 3.1 validation limits:
 - The actual `.env` file was not read, printed, modified, or created; pre-existing `Microsoft/` remains untouched.
 - No application code, dependencies, lockfiles, Docker/Compose files, CI, or project scope was changed. No commit or push was performed.
 
+Step 3.2 work (2026-10-13; Windows host PowerShell and Linux Docker containers):
+- Read the project instructions, scope, progress, and reviewed blueprint before editing; inspected the application, tests, Docker/Compose configuration, CI, and PowerShell checker.
+- Added shared safe database configuration, a bounded synchronous engine/session factory, and a request-scoped dependency with rollback/close and explicit caller commits. Reused the engine in `main.py`; health/readiness and lifespan shutdown behavior remain intact.
+- Implemented all eight blueprint tables with shared SQLAlchemy metadata, PostgreSQL UUID/timestamp defaults, exact NUMERIC types, named checks/unique keys, indexes, and scoped composite foreign keys.
+- Enforced optional invoice mapping pairs, invoice/order supplier consistency, and delivery/invoice line ownership. Explicit relationship joins designate which IDs may be written; order-line lookup relations and workspace collections are read-only. SQLAlchemy warnings fail tests rather than being suppressed.
+- Added Alembic configuration and initial revision `0001_manual_records`, with explicit create/drop operations and no credentials or seed rows. Packaged migrations in the API image; application startup performs no schema or seed writes.
+- Added disposable-target preparation/revision checks, opt-in PostgreSQL fixtures, session/guard tests, and real schema/ORM/rollback/migration tests.
+- Extended the local checker and CI to prepare their guarded disposable database, apply migrations, inspect/verify the revision, and opt in to schema tests before the retained outage/recovery checks.
+- Updated README with PowerShell build/migration/revision/test commands, isolation rules, and expected empty workspace tables. No business APIs, Pydantic business schemas, calculation services, demo seed command, or frontend features were added.
+
+Step 3.2 dependency changes:
+- Added direct `alembic>=1.16,<2.0`, locked to Alembic 1.20.0.
+- The resolver added Mako 1.4.3 and MarkupSafe 3.0.4 as supporting dependencies.
+- Regenerated `backend/uv.lock` using uv 0.8.22 and Python 3.12 inside a temporary Linux container. A version comparison against HEAD confirmed all 35 existing locked package versions were preserved.
+- No host Python/uv installation or frontend dependency change was needed.
+
+Step 3.2 isolation decisions:
+- Disposable database/user are both `supplier_invoice_verification_test`; tests require explicit settings, host `db`, port `5432`, `RUN_POSTGRES_TESTS=1`, and an approved unique check/CI project name.
+- Before migrations/tests, verify PostgreSQL's actual database/user/version and a database-comment marker matching that project. Preparation refuses nonempty unmarked databases and another project's marker. The destructive downgrade test repeats the connected marker guard.
+- Per-test outer transactions and savepoints remove synthetic rows even when a test explicitly commits or recovers from an integrity failure. No SQLite persistence substitute or development-database fallback is used.
+- Each checker/CI run has its own project/network/volume and generated temporary settings file. Only disposable resources are removed. Both Compose files, the development source mount, and frontend checks remain unchanged.
+
+Step 3.2 checks actually performed:
+- Migration generation configured all ORM mappers with SQLAlchemy warnings treated as errors; succeeded with no mapper warnings. Reviewed the generated initial migration, including dependency-safe downgrade order.
+- Initial generator invocation failed because uv 0.8.22 `run` does not accept `--no-install-project`; removed that unsupported flag and reran successfully. No PostgreSQL schema check failed.
+- PowerShell checker syntax passed; `git diff --check` passed.
+- `.\scripts\check-backend.ps1` passed end to end: Compose configuration, locked image build, bounded startup, actual HTTP health/readiness, guarded database preparation, migration upgrade, `alembic current`, and verified head revision.
+- Opted-in `pytest -q` inside the Linux API container passed: 115 tests, including 77 PostgreSQL integration cases, with no skips. Model/migration agreement, types/defaults/named constraints, valid and rejected links/values, relationship reads/writes, usable rollback, explicit session commits, repeated upgrade, and disposable downgrade/upgrade round trip passed.
+- Actual HTTP checks passed: health/readiness HTTP 200 before migrations on an empty database; health HTTP 200 and readiness HTTP 503 while PostgreSQL and Redis were stopped; readiness HTTP 200 after restart.
+- Ordinary `pytest -q -rs` in the built API image with Docker networking disabled passed: 38 tests and 77 integration skips with the explicit opt-in reason. No database connection was needed for this run.
+- Cached actionlint container passed for `.github/workflows/ci.yml` without network access. Text comparison confirmed workflow triggers, read-only permissions, and the full frontend job are unchanged.
+- Verified the disposable project's containers, network, volume, and temporary settings file were removed. Before/after Docker status showed the original development containers still running and PostgreSQL/Redis healthy.
+- Git comparison confirmed `AGENTS.md`, `docs/scope.md`, `docs/manual-workflow.md`, both Compose files, and the entire frontend are unchanged. Pre-existing `Microsoft/` remains untouched.
+
+Step 3.2 user verification:
+- Disposable backend checker passed: 115 tests, exit code 0.
+- Real HTTP health, dependency outage, and recovery checks passed.
+- Development database migration applied successfully.
+- alembic current reports 0001_manual_records (head).
+- PostgreSQL table inspection confirmed eight application tables and alembic_version.
+- Development /health and /ready returned healthy results.
+- Online GitHub CI verification remains pending for Milestone 3.
+
+Step 3.2 remaining checks and limits:
+- Development migration and table inspection were subsequently completed by the user, as recorded above. Workspace initialization remains deferred to Step 3.3.
+- GitHub Actions has not run on these uncommitted changes. Online CI remains pending until a separately authorized submitted revision is checked. Frontend tests/lint/build were not rerun because frontend files and that CI job are unchanged.
+- Both pytest runs reported the existing Starlette TestClient/httpx deprecation warning. It did not fail tests; existing dependencies were preserved and no warning was suppressed.
+- During Codex implementation, the actual .env was not read, printed, created, or modified, and the development database was untouched. The user subsequently applied the development migration. No database reset or deletion was performed.
+- Local checks completed Step 3.2 only. Browser business workflows, seeding, business APIs/schemas/calculations, and all later milestone features remain unimplemented.
+
 Next task:
-- Review the Step 3.1 blueprint and its proposed decisions; Step 3.1 remains the current in-progress checkpoint.
-- Await a separate requested implementation step before creating application files or changing database contents. Do not skip ahead to later milestones.
+- Commit the completed Step 3.2 implementation and verification record.
+- Begin Step 3.3: demo workspace initialization, supplier APIs, and purchase-order APIs.
+- Verify Milestone 3 on GitHub Actions after pushing the implementation.
 
 Blockers: None recorded.
