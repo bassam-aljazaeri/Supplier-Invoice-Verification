@@ -1,7 +1,7 @@
 # Progress
 
 Current milestone: 3 - Manual business records
-Current task: Step 3.3 - supplier and purchase-order APIs (not started)
+Current task: Step 3.4 - delivery-record and draft-invoice APIs (not started)
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -22,6 +22,7 @@ Completed:
 - Completed Milestone 2 - Local foundation
 - Reviewed the Step 3.1 manual-workflow blueprint as the implementation contract
 - Completed Step 3.2 database/session foundation and disposable PostgreSQL schema verification
+- Completed Step 3.3 explicit workspace initialization, supplier/purchase-order APIs, and isolated API verification
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -164,9 +165,57 @@ Step 3.2 remaining checks and limits:
 - During Codex implementation, the actual .env was not read, printed, created, or modified, and the development database was untouched. The user subsequently applied the development migration. No database reset or deletion was performed.
 - Local checks completed Step 3.2 only. Browser business workflows, seeding, business APIs/schemas/calculations, and all later milestone features remain unimplemented.
 
+Step 3.3 work (2026-10-13; Windows host PowerShell and Linux Docker containers):
+- Read the instructions, scope, blueprint, and progress before editing; inspected Step 3.2 models/sessions, migration, PostgreSQL fixtures, CI, and the disposable checker.
+- Added shared fixed-workspace identity and `python -m app.seed_workspace`. Initialization creates only the expected local-demo workspace, is harmless to repeat, and rejects ID/slug/name conflicts without overwriting data. A reusable noncommitting helper supports the later full demo seeder.
+- Added a demo-workspace request dependency, with generic HTTP 503 for a missing/conflicting workspace. All supplier/order reads, counts, filters, reference checks, and writes use this fixed workspace; clients cannot provide a workspace selector. This remains local demo context, not authentication.
+- Added strict Pydantic supplier/order create/read/list contracts, nested order lines, trimmed text, nullable notes, bounded pagination, exact calendar dates, and forbidden extra/server-owned fields.
+- Decimal requests require plain strings with the blueprint's length/scale/range limits; response quantities/prices/money use fixed 3/4/2 fractional digits. Added reusable Decimal helpers with precision 38, per-line ROUND_HALF_UP, sum of rounded cents, and calculated-overflow rejection before insertion.
+- Added POST/list/retrieve routes for `/suppliers` and `/purchase-orders`, HTTP 201/200 and Location headers, supplier ownership checks, stable list ordering/filtering, and order details with ordered lines. Whole documents commit once and return success only afterward.
+- Added business-only sanitized 422/404/409/503/500 envelopes. Database uniqueness constraints handle conflicting creates with rollback; errors do not echo submitted values, unknown keys, SQL, connection strings, or raw exception messages. Health/readiness handlers are unchanged.
+- Extended guarded PostgreSQL fixtures so each API request uses a fresh session and commits a savepoint inside the test's outer transaction. Added actual API persistence, decimal, isolation, seed-conflict, rollback, commit-failure, error-redaction, and recovery tests; retained all foundation/schema tests.
+- The local checker and CI now execute workspace initialization twice after pytest, before existing outage/recovery checks. CI adds `feat/manual-invoice-workflow` to push branches and preserves the previous branches, pull-request trigger, frontend job, and read-only permissions.
+- Updated README with initialization, synthetic API verification, pagination/decimal/error rules, and disposable-test commands. No genuine schema issue was found; the applied initial migration and all models were preserved.
+
+Step 3.3 dependency changes:
+- Declared direct `pydantic>=2.0,<3.0`, retaining locked Pydantic 2.13.5.
+- Regenerated `backend/uv.lock` with uv 0.8.22/Python 3.12 inside a temporary Linux container. All 38 existing locked package versions were preserved and no package was added.
+- No host Python/uv installation, frontend dependency change, cloud resource, or paid service was used.
+
+Step 3.3 checks actually performed:
+- The first disposable run built/applied migrations and ran 258 tests: 256 passed and two failed. One test helper supplied `supplier_id` twice; the error sanitizer also omitted the known `description` field label. Corrected both findings and reran the full checker. Its failed run still removed its disposable resources.
+- Final `.\scripts\check-backend.ps1` passed end to end: Compose validation, locked image build, bounded startup, unchanged real health/readiness, disposable database guard, migration upgrade, and head revision `0001_manual_records`.
+- Final opted-in pytest passed: 258 tests, no skips, including 172 PostgreSQL/API/workspace cases and 86 other checks. Create/list/retrieve persistence, trimming/optional values, strict decimals, rounding/bounds/overflow, pagination/filtering, UUID/record/reference failures, cross-workspace exclusion, duplicate-key rollback, and later valid requests passed.
+- Real PostgreSQL line-trigger failure left no partial order/lines and returned sanitized HTTP 500. An injected failure after flushed rows but before commit returned sanitized HTTP 503, rolled back the whole document, and permitted a later valid request. API commits did not leak rows into subsequent tests.
+- Workspace initialization twice, all conflicting ID/slug/name arrangements, noncommitting helper reuse, missing-workspace HTTP 503, and no implicit request seeding passed. The checker executed the actual module command twice successfully after pytest; no business records were seeded by the command.
+- Retained real HTTP outage/recovery checks passed: health/readiness HTTP 200 before migrations/initialization, health HTTP 200 with readiness HTTP 503 while PostgreSQL/Redis stopped, then readiness HTTP 200 after restart.
+- Ordinary pytest in the final API image with Docker networking disabled passed: 86 tests and 172 explicit integration skips; no database connection was needed.
+- Cached actionlint container passed without network access; PowerShell checker syntax passed. All ten README PowerShell blocks parsed after correcting the documentation checker to recognize Windows CRLF closing fences and require blocks to be found.
+- Lockfile package-version comparison passed. Git comparison confirmed the project instructions/scope/blueprint, database session module, models, Alembic configuration/migrations, Dockerfile, both Compose files, and complete frontend are unchanged.
+- Verified cleanup of both disposable projects' containers/networks/volumes/settings files. Before/after Docker status showed the development API still running and its PostgreSQL/Redis healthy. No development database operations were performed by Codex.
+- `git diff --check` passed; final change scope and new-file whitespace were reviewed.
+
+Step 3.3 remaining checks and limits:
+- The user still needs to rebuild the development API and run explicit workspace initialization, then verify the README's synthetic supplier/order requests if desired. These development writes were not performed by Codex.
+- Online GitHub CI remains pending on a separately authorized submitted revision; actionlint/local checks do not establish an online CI pass. No commit or push was performed.
+- The existing Starlette TestClient/httpx deprecation warning remains in both pytest runs; it did not fail tests and was not suppressed. Compatible dependency versions were preserved.
+- Frontend tests/lint/build and a business browser workflow were not run; frontend files are unchanged and no business pages were implemented.
+- The actual `.env` was not read, printed, created, or modified; `Microsoft/` remains untouched. No development reset/deletion, applied migration rewrite, or other milestone implementation occurred.
+
+Step 3.3 user verification:
+- Disposable backend checker passed: 258 tests, exit code 0.
+- Dependency outage and recovery checks passed.
+- Development database remains migrated to the current head.
+- Demo workspace initialization succeeded twice.
+- Supplier creation returned HTTP 201.
+- Purchase-order creation returned HTTP 201 with subtotal "250.00".
+- Purchase-order retrieval succeeded through Swagger UI and PowerShell.
+- A line-item ID initially returned 404 when used as an order ID; using the header ID resolved the request.
+- Online GitHub CI verification remains pending.
+
 Next task:
-- Commit the completed Step 3.2 implementation and verification record.
-- Begin Step 3.3: demo workspace initialization, supplier APIs, and purchase-order APIs.
-- Verify Milestone 3 on GitHub Actions after pushing the implementation.
+- Stop after Step 3.3 and await the next requested checkpoint.
+- Record any user-run development API verification or future GitHub CI results separately from the local checks above.
+- Keep delivery/invoice APIs, full demo data seeding, frontend work, authentication, uploads, AI, matching, approval, exports, and cloud deployment deferred.
 
 Blockers: None recorded.

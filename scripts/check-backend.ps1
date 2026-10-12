@@ -50,6 +50,10 @@ try {
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'alembic', 'current')
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_schema', 'verify'))
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('pytest', '-q'))
+    # Run explicit initialization after tests; schema lifecycle tests expect an
+    # empty database before their guarded downgrade/upgrade round trip.
+    Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', '-m', 'app.seed_workspace')
+    Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', '-m', 'app.seed_workspace')
     Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '10', 'db', 'redis')
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', 'scripts/check_endpoints.py', '--expect-unavailable', '--timeout', '60')
     Invoke-BackendCheckCompose -CheckArguments @('start', 'db', 'redis')

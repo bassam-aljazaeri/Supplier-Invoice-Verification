@@ -3,9 +3,10 @@
 AI-assisted supplier invoice extraction, matching, review, and approval.
 
 ## Status
-Local development status page is available. Invoice application features are
-not implemented yet. Step 3.2 adds the PostgreSQL schema, migrations, and session
-management; business APIs, forms, calculations, and demo seeding remain later work.
+The local development status page, PostgreSQL schema, and supplier/purchase-order
+APIs are available. Step 3.3 adds explicit workspace initialization and exact
+purchase-order totals. Business forms, delivery/invoice APIs, and full demo data
+seeding remain later work.
 
 ## First release
 English invoices in EUR; one purchase order per invoice; single-page
@@ -93,7 +94,8 @@ checks use real HTTP inside the Linux API container.
 
 Compose startup waits at most 90 seconds for running/healthy services.
 The HTTP checker has a 60-second budget and verifies both status codes and
-complete JSON results. After pytest, the backend job stops its PostgreSQL and
+complete JSON results. After pytest, the backend job initializes only the demo
+workspace twice to check repeatability, then stops its PostgreSQL and
 Redis containers, checks that `/health` remains HTTP 200 while `/ready` reports
 HTTP 503 with both dependencies unavailable, and restarts them to check recovery.
 Failure logs are printed, and an `always()` cleanup step removes the project's
@@ -151,9 +153,10 @@ UUIDs and timestamps have PostgreSQL defaults, and invoice status defaults to
 decimal types, nonnegative/positive checks, and finite upper bounds. Required text
 must be trimmed and nonblank. Business dates are valid calendar dates in years
 0001-9999, with an optional due date no earlier than the invoice date.
-Line-count limits, decimal-string API validation, rounding, and document subtotal
-calculation belong to later business schemas/services; PostgreSQL itself coerces
-input to a numeric column's scale. This step does not calculate line totals.
+PostgreSQL itself coerces input to a numeric column's scale. Step 3.3's request
+schemas additionally reject excess input scale and enforce line-count limits;
+its purchase-order service calculates and rounds line totals and subtotal.
+Invoice-specific schemas and calculations remain deferred.
 
 ORM parent relationships write their designated IDs while keeping workspace IDs
 explicit. Workspace collections and order-line lookup relationships are read-only
@@ -177,7 +180,7 @@ docker compose exec -T api alembic current
 Expect revision `0001_manual_records (head)`. Running `upgrade head` again is
 harmless. This applies forward schema changes to the development database and
 retains its named volume. No workspace rows are inserted: an empty workspace
-table is expected until a later seeding checkpoint. Do not use test cleanup or
+table is expected until the explicit Step 3.3 command below is run. Do not use test cleanup or
 `alembic downgrade base` on this database. The downgrade is verified only in the
 guarded disposable stack. No host Python or uv installation is required.
 
@@ -195,7 +198,8 @@ and does not use or reset the development database. The CI override keeps source
 mounts and host ports absent; no database port or new service has been added.
 The checker verifies real health/readiness, prepares the guarded test target,
 applies migrations, prints and verifies the head revision, runs opted-in pytest,
-checks actual dependency outage/recovery, and cleans up only its disposable stack.
+initializes only the demo workspace twice, checks actual dependency outage/recovery,
+and cleans up only its disposable stack.
 GitHub CI performs the same migration/schema checks; frontend checks are retained.
 
 Integration-test isolation is enforced before schema writes:
@@ -229,4 +233,131 @@ docker compose exec -T api pytest -q -rs
 
 Use the disposable checker for the full schema suite; do not enable integration
 tests on the development stack. See [progress](docs/progress.md) for checks already
-performed and checks still awaiting the user's development migration or online CI.
+performed and checks still awaiting user verification or online CI.
+
+## Demo workspace and manual record APIs (Step 3.3)
+
+This checkpoint provides only create/list/retrieve supplier and purchase-order
+APIs. It does not add business frontend pages, deliveries, invoices, editing,
+deletion, authentication, uploads, extraction, matching, approval, or deployment.
+The existing status page and health/readiness bodies are preserved.
+
+### Explicit workspace initialization
+
+From the project directory, use these **Windows host PowerShell commands**.
+The `exec` commands run Python/Alembic inside the **Linux API container**:
+
+```powershell
+docker compose up --build -d
+docker compose exec -T api alembic upgrade head
+docker compose exec -T api alembic current
+docker compose exec -T api python -m app.seed_workspace
+docker compose exec -T api python -m app.seed_workspace
+```
+
+The command creates only workspace ID `00000000-0000-4000-8000-000000000001`,
+slug `local-demo`, name `Local demo workspace`. Repeated execution preserves the
+same row and timestamp. Conflicting ID, slug, or name causes a clear nonzero exit
+without overwriting existing data. There are no startup/import writes and no
+suppliers, orders, deliveries, or invoices seeded. The reusable helper lets a
+later full demo seeder own its complete transaction.
+
+Every business request uses that fixed workspace; clients cannot supply
+`workspace_id` in bodies or query parameters. Reads, counts, filters, references,
+and writes are workspace-scoped. A missing or conflicting demo workspace returns
+generic HTTP 503. This is local demo context, not authentication or an access
+boundary for real company data. Readiness continues to check connections even
+when the workspace has not been initialized.
+
+### Synthetic API verification
+
+After initialization, run these **Windows host PowerShell commands** against the
+local API. All data is fictional; quantities and prices stay JSON strings.
+
+```powershell
+$manualApiBase = 'http://127.0.0.1:8000'
+$manualSupplierBody = @{
+    supplier_code = 'DEMO-OFFICE-001'
+    name = 'Demo Office Supplies'
+    notes = 'Fictional supplier for local verification.'
+} | ConvertTo-Json
+$manualSupplier = Invoke-RestMethod -Method Post -Uri "$manualApiBase/suppliers" -ContentType 'application/json' -Body $manualSupplierBody
+
+$manualOrderBody = @{
+    supplier_id = $manualSupplier.id
+    po_number = 'PO-DEMO-001'
+    order_date = '2026-10-13'
+    currency = 'EUR'
+    lines = @(
+        @{
+            description = 'Keyboard'
+            quantity = '10.000'
+            unit_price = '25.0000'
+        }
+    )
+} | ConvertTo-Json -Depth 4
+$manualOrder = Invoke-RestMethod -Method Post -Uri "$manualApiBase/purchase-orders" -ContentType 'application/json' -Body $manualOrderBody
+
+Invoke-RestMethod -Uri "$manualApiBase/suppliers?limit=20&offset=0" | ConvertTo-Json -Depth 4
+Invoke-RestMethod -Uri "$manualApiBase/suppliers/$($manualSupplier.id)" | ConvertTo-Json
+Invoke-RestMethod -Uri "$manualApiBase/purchase-orders?supplier_id=$($manualSupplier.id)&limit=20&offset=0" | ConvertTo-Json -Depth 4
+Invoke-RestMethod -Uri "$manualApiBase/purchase-orders/$($manualOrder.id)" | ConvertTo-Json -Depth 6
+```
+
+Create returns HTTP 201 with a `Location` header such as
+`/purchase-orders/{saved-id}`. Retrieve and list return HTTP 200. The example order
+returns quantity `"10.000"`, unit price `"25.0000"`, line total `"250.00"`, and
+subtotal `"250.00"`; its nested lines are ordered by server-assigned `line_no`.
+Lists return `items`, `limit`, `offset`, and `total`; order list items omit lines.
+See [the reviewed blueprint](docs/manual-workflow.md) for complete JSON shapes.
+
+The commands create stored records, so running the same example again gives HTTP
+409 for duplicate identifiers. Retrieve the existing records with the list/detail
+endpoints, or use new fictional codes/numbers for another manual run. Workspace
+initialization remains harmless to repeat independently of these record creates.
+
+Lists default to 20 records and permit `limit=1..100`, `offset=0..10000`, sorted by
+creation time descending and UUID descending for ties. Purchase orders optionally
+filter by `supplier_id`; a valid absent or other-workspace supplier filter returns
+an empty list. Unknown list parameters are rejected. Text is trimmed, required
+text remains nonblank, and blank optional notes become null. Identifiers remain
+case-sensitive. Orders require EUR, a valid `YYYY-MM-DD` date, and 1-100 lines.
+
+Decimal requests accept only plain unsigned strings of 1-32 characters within
+the blueprint's bounds: quantity has at most 3 fractional digits and must be
+positive; price has at most 4 and may be zero. JSON numbers, whitespace, signs,
+exponents, NaN/infinity, excess scale, and out-of-range values are rejected.
+The backend uses Decimal with local precision 38 and `ROUND_HALF_UP` on each
+line, then sums rounded cents. Two line products of `0.005` produce `0.01` each
+and subtotal `0.02`. Calculated overflow is rejected before insertion; clients
+cannot supply totals or other server-owned fields.
+
+Headers and all lines commit together, once, before success is returned. A failed
+save rolls back its entire document, including on a database uniqueness conflict.
+The fixed error envelope contains only `error.code`, `error.message`, and an
+array of `{field, message}` details: validation 422, missing record/reference 404,
+identifier conflict 409, unavailable 503, and unexpected failure 500. Invalid
+request values, unknown field names, SQL, connection strings, and raw exception
+messages are not echoed in errors.
+
+### Isolated verification
+
+Use the existing **Windows host PowerShell** checker for the full suite:
+
+```powershell
+.\scripts\check-backend.ps1
+```
+
+Its approved disposable PostgreSQL target runs the new API/workspace tests along
+with all foundation and schema tests. Each API request gets a fresh SQLAlchemy
+session using a savepoint inside the test's outer transaction, so service commits
+are real within the test but all synthetic data is removed afterward. Tests also
+inject a real PostgreSQL line failure and a commit failure to prove whole-document
+rollback, sanitized errors, and successful recovery. Initialization tests cover
+repeat execution and conflicting data; the checker runs the actual module command
+twice after pytest, before the retained HTTP outage/recovery checks and cleanup.
+
+CI retains its existing triggers and adds pushes to `feat/manual-invoice-workflow`.
+Frontend checks, migration guards, bounded waits, failure logs, read-only GitHub
+permissions, and disposable cleanup remain. No applied migration was rewritten,
+and no model/schema issue required a new migration for this checkpoint.

@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import engine
+from app.api import purchase_orders, suppliers
 
 
 def create_redis_client() -> redis.Redis:
@@ -32,6 +33,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Supplier-Invoice-Verification API", lifespan=lifespan)
+app.include_router(suppliers.router)
+app.include_router(purchase_orders.router)
 
 
 @app.get("/health")
