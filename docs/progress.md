@@ -1,7 +1,10 @@
 # Progress
 
-Current milestone: 2 - Local foundation (validation complete)
-Current task: Final documentation update and pull-request merge
+Current milestone: 3 - Manual business records
+Current task: Step 3.1 - Repository inspection and manual workflow blueprint (in progress)
+
+Milestone 2: Completed. The validation records below are retained as historical
+evidence; Step 3.1 does not claim a new CI run or pull-request merge.
 
 Completed:
 - Defined the first-release scope
@@ -16,6 +19,7 @@ Completed:
 - Added the Step 2C workflow with separate frontend and disposable Compose backend jobs
 - Added real HTTP health/readiness, dependency outage, and recovery checks
 - Added a PowerShell command to reproduce the disposable backend checks locally
+- Completed Milestone 2 - Local foundation
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -80,8 +84,36 @@ Step 2 manual verification (user confirmed):
 - Stopping PostgreSQL made readiness fail; restarting it restored readiness.
 - Backend tests, frontend lint, and frontend production build passed.
 
+Step 3.1 documentation work (2026-10-13; Windows host PowerShell):
+- Read `AGENTS.md`, `docs/scope.md`, this progress record, and `README.md` before changes.
+- Inspected all files under `backend/app`, `backend/tests`, and `frontend/src`, plus `backend/pyproject.toml`, `backend/Dockerfile`, both Compose files, `.github/workflows/ci.yml`, and `frontend/package.json`.
+- Also inspected the Vite proxy, the disposable backend checker, and its HTTP endpoint-checking script to adapt the proposed layout and verification plan.
+- Added `docs/manual-workflow.md` with the synthetic keyboard workflow, field-level schema and ownership constraints, decimal/date rules, API examples, frontend pages, proposed files, future checks, and scope comparison.
+- Marked Milestone 2 completed and Step 3.1 in progress as requested; the blueprint is available for review and no Step 3 application implementation has begun.
+
+Step 3.1 decisions proposed for review:
+- Reuse FastAPI, synchronous SQLAlchemy/psycopg, PostgreSQL, React/TypeScript, Vite, and the existing status page and checks.
+- Use a seeded local demo workspace, scoped API lookups, and composite database foreign keys; this is not authentication or a company security boundary.
+- Use decimal strings for all quantities and money, backend decimal calculations, explicit per-line half-up rounding, and one manually entered invoice tax amount.
+- Keep invoices in draft and expose only create/list/retrieve business endpoints with atomic document saves and bounded pagination.
+- Propose Alembic for future migrations and no additional frontend dependency; identifier rules, numeric bounds, optional manual line mappings, and API contracts remain reviewable choices.
+- No material conflict with `docs/scope.md` was found; the scope's discrepancy acceptance example and all later features remain deferred.
+
+Step 3.1 checks actually performed:
+- Initial `git status --short --untracked-files=normal` showed only the pre-existing untracked `Microsoft/`; post-edit status showed that path and the two intended documentation changes.
+- Parsed all 12 synthetic JSON examples with PowerShell `ConvertFrom-Json`; verified 20 decimal fields use strings with the documented scales, pagination total is an integer, linked IDs agree, quantities are 10/8/10, invoice status/currency are draft/EUR, and example totals agree using decimal arithmetic.
+- The first example checker incorrectly treated pagination `total` as a monetary field and failed. Corrected that checker to distinguish the integer count, then reran successfully; the examples did not require a change for that failure.
+- A documentation structure check passed: eight numbered sections, all eight proposed tables, all four create/list/retrieve resource contracts, and the retained scope acceptance example.
+- Reviewed the blueprint against `docs/scope.md` and the inspected implementation/configuration; no material scope conflict was found.
+- `git diff --check` passed for tracked changes; the new blueprint's explicit trailing-whitespace check passed. Supplemental no-index comparisons against `NUL` returned exit 1 for new-file differences with no whitespace-error diagnostics; the first comparison also reported Git's LF-to-CRLF normalization warning.
+
+Step 3.1 validation limits:
+- No application tests, lint/build, Docker/Compose commands, migrations, seed commands, database operations, browser workflow, or GitHub CI were run in this documentation checkpoint.
+- The actual `.env` file was not read, printed, modified, or created; pre-existing `Microsoft/` remains untouched.
+- No application code, dependencies, lockfiles, Docker/Compose files, CI, or project scope was changed. No commit or push was performed.
+
 Next task:
-- Commit this validation record, confirm the updated pull-request checks pass, and merge Milestone 2.
-- Review the skills and tools required for Milestone 3 before starting implementation.
+- Review the Step 3.1 blueprint and its proposed decisions; Step 3.1 remains the current in-progress checkpoint.
+- Await a separate requested implementation step before creating application files or changing database contents. Do not skip ahead to later milestones.
 
 Blockers: None recorded.
