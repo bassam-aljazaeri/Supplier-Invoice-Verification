@@ -3,10 +3,10 @@
 AI-assisted supplier invoice extraction, matching, review, and approval.
 
 ## Status
-The local development status page, PostgreSQL schema, and supplier, purchase-order,
-delivery-record, and draft-invoice APIs are available. Step 3.4 adds deliveries,
-optional manual invoice mappings, exact invoice totals, and documented business
-error envelopes. Business frontend pages and full demo data seeding remain later work.
+The local website has Status, supplier, and purchase-order pages. Supplier,
+purchase-order, delivery-record, and draft-invoice APIs store records in PostgreSQL.
+Step 3.5A adds website navigation and supplier/order list, creation, and detail
+views. Delivery/invoice pages and full demo data seeding remain later work.
 
 ## First release
 English invoices in EUR; one purchase order per invoice; single-page
@@ -482,7 +482,7 @@ on a selected order, omit or null only `purchase_order_line_id`.
 
 Repeating these creates returns 409. Retrieve existing records, or use new fictional
 document numbers for another run. Authentication, uploads, AI, automatic matching,
-approval, notifications, exports, business frontend pages, and full demo seeding
+approval, notifications, exports, delivery/invoice pages, and full demo seeding
 remain later work.
 
 ### Isolated Step 3.4 checks
@@ -505,3 +505,113 @@ operation while preserving foundation contracts. Normal pytest still skips all
 PostgreSQL tests unless the guarded disposable environment opts in. No host Python
 installation or new dependency is needed. See [progress](docs/progress.md) for
 completed checks and pending user/online CI verification.
+
+## Supplier and purchase-order website (Step 3.5A)
+
+The navigation shows **Supplier-Invoice-Verification**, Status, Suppliers, and
+Purchase orders. Delivery/invoice navigation will be added with those pages in
+Step 3.5B. Native hash links support local deep links and browser history without
+adding a routing dependency. An empty hash opens Status; unknown paths or invalid
+page parameters show Page not found with a link to Status.
+
+| Route | Page |
+| --- | --- |
+| `#/status` | Existing API/PostgreSQL/Redis checks and Refresh status. |
+| `#/suppliers` | Paginated supplier codes and names, with creation/detail links. |
+| `#/suppliers/new` | Supplier code, name, optional notes, Save and Cancel. |
+| `#/suppliers/{id}` | Saved supplier fields and paginated linked purchase orders. |
+| `#/purchase-orders` | Paginated order numbers, dates, EUR subtotals, and links. |
+| `#/purchase-orders/new` | Paginated supplier chooser, header fields, and editable unsaved lines. |
+| `#/purchase-orders/{id}` | Saved header, readable supplier link, ordered lines, and server subtotal. |
+
+List hashes retain `limit` and `offset`, for example
+`#/suppliers?limit=20&offset=20`. Order lists may also use `supplier_id`; supplier
+details use their page parameters for linked orders. All pages observe the API's
+limit of 1-100 records and maximum offset of 10000. Previous/Next controls and
+counts show the current page. The supplier chooser fetches 20 records at a time
+and retains the selection when moving between pages. If no supplier exists, it
+explains that one must be created first and links to the creation form.
+
+Business requests use native fetch and the existing `/api` development proxy.
+Each request has a five-second bound covering headers and the complete response
+body. Leaving a page or replacing a read cancels obsolete requests; completion
+guards prevent stale results or a late save from redirecting a different page.
+Validation, conflicts, missing records/references, service/server failures,
+network failures, and timeouts are handled separately. Read failures offer Retry.
+
+Forms use associated labels, hints, inline errors, a focusable error summary,
+keyboard controls, and visible focus. They keep text/decimal values when a save
+fails and focus the first invalid field when available. Save is guarded against
+repeat submissions while active. Unsaved lines use stable local keys, with a
+minimum of one and maximum of 100 lines. Add/remove controls apply only before
+the document is saved. There are no saved-record editing/deletion controls.
+
+Quantities and prices remain strings, including while entering JSON requests.
+Unsigned decimal inputs reject whitespace, exponents, signs, JSON numbers, excess
+scale, and values beyond the backend bounds. Required text is trimmed/nonblank;
+blank optional notes become null. The date is a calendar-date string without a
+timezone conversion. The website performs no financial multiplication, rounding,
+or subtotal calculation. It displays the exact strings returned by the backend.
+
+Drafts and save-error feedback stay in React memory across navigation in the same
+tab. They are cleared on successful creation or a full reload, and are never
+written to browser storage. Cancel returns to the list and retains the unsaved
+draft for this session. Interrupted, timed-out, or lost save responses may mean
+the record was already saved. The form preserves its input and offers **Check
+saved records (opens a new tab)** to find the code/number before another Save.
+Conflicts offer the same list check. POST requests are never automatically retried.
+
+### Start the website and run checks
+
+Using your existing local backend setup, run these **Windows host PowerShell
+commands** from the project directory. No host Python or new npm dependency is
+required; the existing Node.js 24 setup and lockfile remain in use:
+
+```powershell
+Set-Location frontend
+npm.cmd test
+npm.cmd run lint
+npm.cmd run build
+npm.cmd run dev
+```
+
+Open `http://127.0.0.1:5173`. Keep the Vite terminal running while checking pages.
+The `/api` proxy applies to development; production hosting/API routing is outside
+this checkpoint.
+
+### Manual browser verification still to perform
+
+Use existing fictional records for read-only navigation checks. Exercise creation
+in your chosen synthetic verification stack: Save creates PostgreSQL records in
+the database served by that API. No development record writes or browser checks
+were performed during Step 3.5A implementation.
+
+1. Open the site without a hash, then `#/status`. Verify the three checks, refresh
+   disabling, and failure/recovery after an outage in the synthetic test stack.
+2. Follow Suppliers and Purchase orders, use Back/Forward, paste detail deep links,
+   and reload those URLs. Check an unknown route and a valid absent record UUID.
+3. Verify empty/loading/error states, Retry, list page counts, Previous/Next,
+   supplier details' linked order pages, and order-to-supplier navigation.
+4. In Create supplier, enter only fictional code/name/notes. Check blank/oversized
+   fields and duplicate-code feedback. Save valid data and confirm navigation uses
+   the returned supplier header ID. Verify trimmed text and nullable notes.
+5. In Create purchase order, browse supplier pages beyond the first and select a
+   readable code/name. Confirm selection survives paging. With no suppliers,
+   confirm the create-first explanation/link.
+6. Enter a fictional number/date and one Keyboard line with quantity `10.000`
+   and price `25.0000`. Add/remove unsaved lines, check required/decimal/date/line
+   limits, and save. Expect the detail view's saved subtotal `250.00` EUR; quantities
+   and prices should retain their backend fixed scales.
+7. Check keyboard tab order, radio selection, labels, first-error focus, error
+   summary, visible focus, and table scrolling/layout at narrow widths. Try repeat
+   Save clicks and confirm one document request. Verify typed input survives failure.
+8. Simulate a delayed/lost POST response using browser network tools in the test
+   stack. Check the uncertain-save message, retained input, list check before a
+   manual retry, and absence of automatic POST retries. Leave during a save and
+   confirm a late response does not redirect the new page; return to inspect the
+   retained draft and warning. Also leave a delayed read and verify no stale page.
+
+The Node tests use simulated responses and pure navigation/validation/request
+helpers; they do not establish that these real browser workflows passed.
+See [progress](docs/progress.md) for the actual automated results and remaining
+browser/online CI verification.

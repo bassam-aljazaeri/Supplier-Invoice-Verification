@@ -1,7 +1,7 @@
 # Progress
 
 Current milestone: 3 - Manual business records
-Current task: Step 3.5A - website navigation, suppliers, and purchase orders (not started)
+Current task: Step 3.5B - delivery-record and draft-invoice website pages (not started)
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -24,6 +24,7 @@ Completed:
 - Completed Step 3.2 database/session foundation and disposable PostgreSQL schema verification
 - Completed Step 3.3 explicit workspace initialization, supplier/purchase-order APIs, and isolated API verification
 - Completed Step 3.4 delivery-record and draft-invoice APIs, business OpenAPI error contracts, and isolated API verification
+- Completed Step 3.5A website navigation, supplier/purchase-order pages, and frontend helper verification
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -255,9 +256,52 @@ Step 3.4 user verification:
 - Delivery and invoice records reference the intended purchase order and line.
 - Online GitHub CI verification remains pending.
 
+Step 3.5A implementation and file purposes:
+- Updated `frontend/src/App.tsx` to show the exact Supplier-Invoice-Verification name, Status/Suppliers/Purchase orders navigation, hash routes, a useful unknown-page state, page focus, and per-form drafts/feedback that stay in memory across navigation. Updated `App.css` for labeled forms, feedback, visible focus, paginated lists, tables, and narrow-screen layouts.
+- Extracted `frontend/src/pages/StatusPage.tsx` from the existing App. Preserved the status card/check/refresh logic, five-second status requests, cancellation, independent updates, recovery messages, and immediate repeat-click guard. The status request module and original 17 tests are unchanged.
+- Added `types.ts` for actual supplier/order create/read/list contracts and string decimals; `validation.ts` for text/date/decimal/line limits, accepted-field payloads, stable unsaved line keys, indexed messages, and first-error focus; `api.ts` for native proxy requests, five-second full-body bounds, response-format checks, business error mapping, and uncertain dispatched writes.
+- Added `navigation.ts` for implemented hash routes, pagination/filter serialization and bounds, and hash-change subscriptions. Added `requestScope.ts` completion/cancellation guards and `hooks/useBusiness.ts` for read retries, obsolete-read cancellation, guarded saves, and protection against late responses redirecting a different page.
+- Added `components/Navigation.tsx`, `Pagination.tsx`, and `RequestState.tsx` for active navigation, bounded page controls/counts, and loading/retry/error states. Added `FormFeedback.tsx` for labels, hints, inline errors, an error summary, and uncertain/conflicting save list checks.
+- Added `components/SupplierPicker.tsx` to fetch suppliers in pages of 20, retain a selected code/name across pages, and explain/link creation when none exist. Added `LineItemsForm.tsx` for unsaved description/quantity/price rows with stable keys and 1-100 add/remove limits. Added `PurchaseOrderList.tsx` for reusable scoped/filterable order summaries and pagination.
+- Added `pages/suppliers/SupplierListPage.tsx`, `SupplierNewPage.tsx`, and `SupplierDetailPage.tsx` for paginated code/name browsing, supplier creation, saved fields, and paginated linked orders. Added `pages/purchase-orders/PurchaseOrderListPage.tsx`, `PurchaseOrderNewPage.tsx`, and `PurchaseOrderDetailPage.tsx` for number/date/EUR-subtotal browsing, nested creation, and saved supplier/header/line/subtotal views.
+- Added `frontend/tests/api.test.mjs`, `navigation.test.mjs`, and `validation.test.mjs` using the existing Node runner. Updated README with routes, behavior, Windows PowerShell commands, and remaining manual browser checks.
+
+Step 3.5A decisions and limits:
+- Reused React, TypeScript, Vite, CSS, native fetch, and simple hash navigation. Empty hash opens Status; canonical detail IDs and bounded page parameters support deep links/history. Delivery/invoice routes remain absent from functional website navigation until Step 3.5B.
+- Prices, quantities, line totals, and subtotals remain strings. Decimal bounds are checked by digit comparison, without binary floating-point conversion. The website does not calculate financial products, rounding, or totals; saved totals come from the backend. Integer conversion is limited to calendar dates and pagination/count handling.
+- Form payloads contain only accepted fields; local keys, IDs/workspace/timestamps, line numbers, and totals are omitted. EUR is fixed. Text is trimmed for submission, blank notes become null, dates stay calendar strings, and invalid decimal notation/scale/ranges are rejected locally while server validation remains authoritative.
+- Each read has cancellation and completion guards. Writes have an immediate controller guard plus disabled controls during saving. No POST is automatically retried. Dispatched network/timeout/cancelled/invalid-success responses may have saved the record; inputs and warning remain, with a list check opening a new tab before a manual retry.
+- Supplier/order drafts and error feedback are held only in React memory. Navigation/Cancel retains them within the tab; success clears the corresponding draft and navigates using the saved header ID. Full reload clears unsaved input; saved-record detail/list routes reload from the API. No browser storage or hardcoded local record IDs were added.
+- No dependency, lockfile, Vite proxy, backend, Docker/Compose, checker, or CI change was needed. Existing CI's frontend job discovers the new test files via `npm test`, then retains lint/build. No applied migration, demo seed, editing/deletion of saved records, or later milestone feature was implemented.
+
+Step 3.5A checks actually performed (Windows host PowerShell):
+- Read the instructions, scope, blueprint, and progress before editing; inspected frontend source/tests/scripts/configuration and backend supplier/order schemas, endpoints, and error contracts. Initial Git status showed only pre-existing untracked `Microsoft/`.
+- Confirmed Node.js v24.21.0 and npm 11.19.0 with the existing installed dependencies; no install or dependency resolution was required.
+- Initial production build failed on TypeScript narrowing of an order response's nested lines after checking the summary type. Captured/validated the lines array before the summary guard and corrected the build. No frontend helper test failed.
+- Final `npm.cmd test` passed: 99 tests, no failures or skips, including all 17 original status tests and 82 new cases. New checks cover nested accepted payloads, exact decimal strings/output scales, pagination/filter queries, HTTP error envelopes, sanitized unknown failures, input bounds, calendar dates, stable keys, field-focus helper behavior, simulated hash/history events, obsolete completion guards, full-body timeouts, cancellation, uncertain writes, no automatic POST retries, and later explicit read recovery.
+- Final `npm.cmd run lint` passed; final `npm.cmd run build` passed TypeScript and Vite production compilation (37 modules). Build artifacts remain ignored.
+- Compared the extracted status logic against the original App from Git: labels, cards, state, refresh implementation, cleanup, and recovery-note logic match. Existing `status.ts` and `tests/status.test.mjs` are unchanged.
+- All 15 README PowerShell blocks parsed successfully. `git diff --check` passed; explicit whitespace/final-newline checks passed for all 23 new frontend/test files.
+- Git comparison confirmed instructions/scope/blueprint, the complete backend, both dependency manifests/lockfiles, proxy configuration, frontend entry/browser title/base CSS/status requests/tests, Docker/Compose files, scripts, and CI are unchanged.
+
+Step 3.5A remaining checks:
+- No browser was exercised. Rendering, actual Back/Forward/refresh/deep-link behavior, keyboard/radio controls, focus, narrow-screen table scrolling/layout, double-click Save handling, real creates, and lost/delayed-response navigation remain unverified in a browser. The mocked/helper tests do not prove the real browser workflow or PostgreSQL persistence through these pages.
+- README lists the manual synthetic-browser checks and exact frontend commands. Existing fictional records can be used for read-only browsing; creation checks should use the chosen synthetic verification stack.
+- Backend tests/disposable checker were not rerun in this frontend-only checkpoint. No development database contents were read or modified through API/SQL calls; frontend tests used only simulated fetch responses. The actual `.env` was not read, printed, created, or modified, and `Microsoft/` remains untouched.
+- Online GitHub CI remains pending on a separately authorized submitted revision. No commit, push, cloud resource, or deployment was performed.
+
+Step 3.5A user verification:
+- Frontend tests passed: 99 tests.
+- Frontend lint and production build passed.
+- Supplier and purchase-order website creation worked.
+- Saved order details showed the correct supplier, quantities, prices, and EUR totals.
+- Refresh, supplier links, browser Back/Forward, and keyboard navigation worked.
+- Status page continued to show healthy services.
+- Remaining browser scenarios, including interrupted writes and narrow layouts, require later verification.
+
 Next task:
-- Stop after Step 3.4 and await the next requested checkpoint.
-- Record user-run development delivery/invoice verification and future online CI results separately from completed local checks.
-- Keep full demo seeding, business frontend pages, editing/deletion, authentication, uploads, AI, automatic matching, approval, notifications, exports, and cloud infrastructure deferred.
+- Stop after Step 3.5A and await the next requested checkpoint.
+- Record user-run browser verification and online CI separately from the automated helper checks.
+- Keep delivery/invoice website pages for Step 3.5B; full demo seeding, saved-record editing/deletion, authentication, uploads, AI, automatic matching, approval, notifications, exports, and cloud infrastructure remain deferred.
 
 Blockers: None recorded.
