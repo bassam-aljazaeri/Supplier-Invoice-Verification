@@ -29,3 +29,17 @@ export function FormFeedback({ error, listHref }: { error: ApiFailure | null; li
     {(error.kind === 'unavailable' || error.kind === 'server' || error.kind === 'network' || error.kind === 'timeout') && <p><a href="#/status">Check service status</a></p>}
   </div>
 }
+
+export function SelectField({ id, field, label, value, onChange, details, options, disabled = false, hint }: {
+  id: string; field: string; label: string; value: string; onChange: (value: string) => void
+  details: ErrorDetail[]; options: { value: string; label: string }[]; disabled?: boolean; hint?: string
+}) {
+  const error = fieldError(details, field)
+  return <div className="form-field"><label htmlFor={id}>{label}</label>
+    <select id={id} name={field} data-field={field} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} aria-invalid={!!error} aria-describedby={[hint ? `${id}-hint` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined}>
+      {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+    {hint && <p className="hint" id={`${id}-hint`}>{hint}</p>}
+    {error && <p className="field-error" id={`${id}-error`}>{error}</p>}
+  </div>
+}

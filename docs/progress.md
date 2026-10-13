@@ -1,7 +1,7 @@
 # Progress
 
 Current milestone: 3 - Manual business records
-Current task: Step 3.5B - delivery-record and draft-invoice website pages (not started)
+Current task: Step 3.6 - repeatable demo data and final verification
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -25,6 +25,7 @@ Completed:
 - Completed Step 3.3 explicit workspace initialization, supplier/purchase-order APIs, and isolated API verification
 - Completed Step 3.4 delivery-record and draft-invoice APIs, business OpenAPI error contracts, and isolated API verification
 - Completed Step 3.5A website navigation, supplier/purchase-order pages, and frontend helper verification
+- Completed Step 3.5B delivery-record/draft-invoice website pages, connected details, and frontend helper verification
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -299,9 +300,50 @@ Step 3.5A user verification:
 - Status page continued to show healthy services.
 - Remaining browser scenarios, including interrupted writes and narrow layouts, require later verification.
 
+Step 3.5B implementation and file purposes:
+- Updated `frontend/src/App.tsx`, `navigation.ts`, and `components/Navigation.tsx` to register delivery/invoice list/new/detail pages and the Delivery records/Invoices links while retaining the exact Supplier-Invoice-Verification name and existing routes. Hash lists preserve bounded pagination and supported filters; the website delivery path maps to backend `/delivery-receipts`.
+- Extended `types.ts`, `validation.ts`, and `api.ts` with actual delivery/invoice request, saved-record, list, draft, and filter contracts; accepted-field payload projection; string quantities/prices/tax; required explicit tax; dates/due dates; line limits and membership; receipt duplicate checks; and canonical saved decimal/status formats. All calculations remain on the backend.
+- Added `selections.ts` for synchronous dependency clearing and selected-order identity checks; added `hooks/useSelectedOrder.ts` for keyed, cancelled, guarded detail reads. Switching delivery order clears its lines; switching invoice supplier clears its order/mappings; switching invoice order clears mappings. Other fields and invoice line keys are preserved, and old fulfilled requests never repopulate drafts.
+- Added `components/OrderPicker.tsx` for readable paginated order choice, optional no-order selection, and supplier-filtered invoice orders. Invoice order pickers are keyed by supplier ID so paging resets with a changed supplier. Extended `SupplierPicker.tsx` with a contextual empty hint while preserving its order-form default.
+- Extended `components/FormFeedback.tsx` with labeled/selectable inline-error fields and `LineItemsForm.tsx` with optional descriptive manual invoice mappings. Added select/checkbox focus and responsive styling in `App.css`; retained existing save guards, request scopes, error envelopes, uncertain-write list checks, and in-memory draft behavior.
+- Added `components/DeliveryList.tsx`, `InvoiceList.tsx`, and `SupplierLink.tsx` for shared independently loaded/paginated summaries and readable supplier navigation.
+- Added `pages/deliveries/DeliveryListPage.tsx`, `DeliveryNewPage.tsx`, `DeliveryLinesForm.tsx`, and `DeliveryDetailPage.tsx`. Creation chooses current order lines by description/checkbox, enters positive string quantities, rejects duplicates, waits for the current order detail, and navigates using the saved receipt header ID. Saved receipt quantities remain visible if its separate order-description/supplier lookup fails.
+- Added `pages/invoices/InvoiceListPage.tsx`, `InvoiceNewPage.tsx`, and `InvoiceDetailPage.tsx`. Creation supports supplier, optional filtered order, required tax initially blank, optional due date, priced lines, optional/null manual mappings, and saved header-ID navigation. Details show draft status, saved lines/links, and authoritative subtotal/tax/total strings.
+- Extended `pages/purchase-orders/PurchaseOrderDetailPage.tsx` with separate delivery/invoice sections using existing order/supplier filters; extended `pages/suppliers/SupplierDetailPage.tsx` with filtered invoices. New related lists own their paging, read, retry, loading, and error state; one failed lookup does not hide the saved header or other sections.
+- Added `frontend/tests/delivery-invoice.test.mjs` and updated `tests/navigation.test.mjs` to recognize the now-implemented routes and test their filter/pagination rules. Updated README with routes, selection behavior, request/uncertainty rules, and the synthetic 10/8/10 manual browser checklist.
+
+Step 3.5B decisions:
+- No new dependency or architectural replacement was required. Reused React/TypeScript, CSS, native fetch, the Vite proxy, hash navigation, five-second full-body requests, pagination, completion scopes, error handling, and guarded saving.
+- Delivery/invoice requests contain only backend-accepted fields. Server-owned IDs/workspaces/timestamps/status/totals/internal line order IDs and local line keys are omitted. Decimal input is not coerced, financial values remain strings, and no financial calculation, automatic mapping, cumulative-quantity comparison, or discrepancy flag is performed by the website.
+- Positive overdelivery/multiple receipts, no-order invoices, unmapped lines on selected orders, and repeated invoice mappings remain valid as specified by the backend. Tax must be entered explicitly, including `0.00`; the website does not infer tax or copy priced values when mapping.
+- New drafts and save feedback remain only in React memory across same-tab navigation. Failure retains input; success clears the corresponding draft. Full reload clears unsaved values but saved list/detail routes read from the API. Interrupted writes may be saved and offer list inspection in a new tab before manual retry; POST requests are never automatically retried.
+- No backend, migration, seed, dependency/lockfile, Docker/Compose, proxy, existing request-scope/save hook, status page/request/test, or CI change was necessary. The existing frontend CI wildcard discovers the new test file. No saved-record editing/deletion or later milestone feature was added.
+
+Step 3.5B checks actually performed (Windows host PowerShell):
+- Read the instructions, scope, blueprint, and progress before changes; inspected existing frontend architecture/requests/navigation/forms/selectors/tests and actual backend delivery/invoice schemas, routers, and validation. Initial Git status showed only pre-existing untracked `Microsoft/`.
+- Confirmed existing Node.js v24.21.0 and npm 11.19.0; no install or dependency resolution was required.
+- Focused new delivery/invoice test file passed: 34 mocked/helper tests, no failures or skips. An independent read-only contract/lifecycle review found no blocking issue; the reused supplier empty hint was made contextual for invoices.
+- Final `npm.cmd test` passed: 140 tests, no failures or skips. All original status tests and supplier/order/API/validation/lifecycle checks passed; obsolete delivery/invoice absent-route assertions were replaced with implemented-route coverage. New checks cover accepted nested payloads, dependent-selection clearing/stable keys, obsolete response rejection, optional/manual/repeated mappings, decimals/tax/date/text/line bounds, overdelivery allowance, filters, saved response formats, business errors, cancellation/full-body timeouts, uncertain writes, no automatic retries, and explicit read recovery.
+- Final `npm.cmd run lint` passed; final `npm.cmd run build` passed TypeScript and Vite production compilation (50 modules). Initial full build/lint also passed. No failing automated check required an implementation correction in this checkpoint.
+- All 16 README PowerShell blocks parsed successfully. `git diff --check` passed; explicit trailing-whitespace/final-newline checks passed for all 14 new frontend/test files. Build output and node_modules remain ignored.
+- Git comparison confirmed the complete backend, instructions/scope/blueprint, manifests/lockfiles, Docker/Compose files, scripts/CI, Vite proxy, frontend entry/browser title/base CSS, status page/module/tests, request scopes, existing read/save hooks, and previous API/validation tests are unchanged.
+
+Step 3.5B remaining verification and limits:
+- No browser was exercised. Real Back/Forward/refresh/deep-link behavior, radio/checkbox/select keyboard control, first-error focus, narrow layouts, full synthetic 10/8/10 saves/persistence, pagination beyond page one, independent related-list failures, repeat Save clicks, and delayed/interrupted navigation remain unverified in a browser. Mock/helper tests do not establish those real workflows.
+- README lists exact frontend check/start commands and manual scenarios. Existing fictional records can support read-only checks; creation checks belong in the chosen synthetic verification stack. No real API/SQL/browser commands or development database writes were performed by Codex; frontend requests in tests were mocked.
+- Backend tests/disposable checker were not rerun for this frontend-only checkpoint. Online GitHub CI remains pending on a separately authorized submitted revision. No commit or push was performed.
+- The actual `.env` was not read, printed, created, or modified; `Microsoft/` remains untouched. No cloud resource, paid service, dependency addition, deployment, seeding, authentication, uploads, AI, approval, or export work occurred.
+
+Step 3.5B user verification:
+- Frontend tests passed: 140 tests, no failures or skips.
+- Frontend lint and production build passed.
+- User confirmed the delivery/invoice website workflow works.
+- Detailed final browser verification remains part of Step 3.6.
+- Online CI verification for the final Milestone 3 revision remains pending.
+
 Next task:
-- Stop after Step 3.5A and await the next requested checkpoint.
-- Record user-run browser verification and online CI separately from the automated helper checks.
-- Keep delivery/invoice website pages for Step 3.5B; full demo seeding, saved-record editing/deletion, authentication, uploads, AI, automatic matching, approval, notifications, exports, and cloud infrastructure remain deferred.
+- Stop after Step 3.5B and await the next requested checkpoint.
+- Record user-run browser verification and future online CI results separately from the completed mock/helper checks.
+- Keep full demo seeding, saved-record editing/deletion, authentication, uploads, AI, automatic matching, approval, notifications, exports, and cloud infrastructure deferred.
 
 Blockers: None recorded.

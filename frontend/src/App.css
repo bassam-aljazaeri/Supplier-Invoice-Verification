@@ -17,7 +17,7 @@
 
 a { color: #245d53; text-underline-offset: 0.2em; overflow-wrap: anywhere; }
 a:hover { color: #143e35; }
-button, input, textarea { font: inherit; }
+button, input, textarea, select { font: inherit; }
 button, .button-link {
   min-height: 44px;
   padding: 0.65rem 1rem;
@@ -32,7 +32,7 @@ button:hover:not(:disabled), .button-link:hover { background: #e0eee7; }
 .primary-button { background: #245d53; border-color: #245d53; color: white; }
 .primary-button:hover:not(:disabled) { background: #17463e; }
 button:disabled { cursor: not-allowed; opacity: 0.6; }
-:where(a, button, input, textarea, fieldset, .error-summary, .table-scroll):focus-visible { outline: 3px solid #37766a; outline-offset: 3px; }
+:where(a, button, input, textarea, select, fieldset, .error-summary, .table-scroll):focus-visible { outline: 3px solid #37766a; outline-offset: 3px; }
 #page-content { min-width: 0; }
 #page-content:focus { outline: none; }
 .site-navigation { display: flex; flex-wrap: wrap; gap: 0.4rem; padding-top: 0.5rem; }
@@ -59,10 +59,10 @@ th { background: #f3f8f5; font-weight: 650; }
 .form-controls { margin: 0; padding: 0; border: 0; min-width: 0; }
 .form-field { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1.3rem; min-width: 0; }
 .form-field label { font-weight: 650; }
-.form-field input, .form-field textarea { width: 100%; min-height: 44px; padding: 0.65rem; border: 1px solid #9aafa5; border-radius: 6px; color: #263633; background: white; }
+.form-field input, .form-field textarea, .form-field select { width: 100%; min-height: 44px; padding: 0.65rem; border: 1px solid #9aafa5; border-radius: 6px; color: #263633; background: white; }
 .form-field textarea { resize: vertical; }
 input[readonly] { background: #f3f8f5; }
-input[aria-invalid="true"], textarea[aria-invalid="true"] { border: 2px solid #a33c2d; }
+input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid #a33c2d; }
 .hint { color: #566764; font-size: 0.87rem; margin: 0; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .field-error { color: #942d21; font-size: 0.9rem; margin: 0; }
@@ -76,6 +76,9 @@ legend { padding: 0 0.3rem; font-weight: 650; }
 .supplier-options label { display: flex; align-items: center; gap: 0.6rem; padding: 0.7rem 0.25rem; cursor: pointer; min-height: 44px; overflow-wrap: anywhere; }
 .supplier-options input { width: 1.15rem; height: 1.15rem; flex: 0 0 auto; accent-color: #245d53; }
 .selected-supplier { margin-top: 1rem; overflow-wrap: anywhere; }
+.delivery-line-choice, .order-option { display: flex; align-items: center; gap: 0.7rem; min-height: 44px; margin-block: 0.7rem; overflow-wrap: anywhere; }
+.delivery-line-choice label, .order-option { cursor: pointer; }
+.delivery-line-choice input, .order-option input { width: 1.15rem; height: 1.15rem; flex: 0 0 auto; accent-color: #245d53; }
 .supplier-picker > a { display: inline-block; margin-top: 1rem; }
 .line-card { min-width: 0; margin: 1.2rem 0; padding: 1rem; border: 1px solid #d5e1da; border-radius: 8px; background: #fbfdfc; }
 .form-cancel { margin: 1.2rem 0 0; }

@@ -1,4 +1,4 @@
-import type { ErrorDetail, OrderDraft, PurchaseOrderCreate, SupplierCreate, SupplierDraft } from './types.ts'
+import type { DeliveryDraft, DeliveryReceiptCreate, ErrorDetail, InvoiceCreate, InvoiceDraft, OrderDraft, PurchaseOrder, PurchaseOrderCreate, SupplierCreate, SupplierDraft } from './types.ts'
 
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const QUANTITY_MAX = '999999999.999'
@@ -38,6 +38,66 @@ function validateNotes(errors: ErrorDetail[], notes: unknown) {
   if (notes !== undefined && notes !== null && (typeof notes !== 'string' || Array.from(notes.trim()).length > 2000)) {
     errors.push({ field: 'notes', message: 'Notes must contain at most 2000 characters.' })
   }
+}
+
+export function validateDelivery(input: DeliveryReceiptCreate, order?: PurchaseOrder | null): ErrorDetail[] {
+  const errors: ErrorDetail[] = []
+  if (!isUuid(input.purchase_order_id)) errors.push({ field: 'purchase_order_id', message: 'Choose an available purchase order.' })
+  if (order && order.id !== input.purchase_order_id) errors.push({ field: 'purchase_order_id', message: 'Choose the current purchase order.' })
+  requiredText(errors, 'receipt_number', input.receipt_number, 64)
+  if (!validDate(input.received_date)) errors.push({ field: 'received_date', message: 'Enter a valid calendar date (YYYY-MM-DD).' })
+  validateNotes(errors, input.notes)
+  if (!Array.isArray(input.lines) || input.lines.length < 1 || input.lines.length > 100) {
+    errors.push({ field: 'lines', message: 'Choose between 1 and 100 order lines.' })
+    return errors
+  }
+  const seen = new Set<string>()
+  input.lines.forEach((line, index) => {
+    const field = `lines[${index}].purchase_order_line_id`
+    if (!isUuid(line.purchase_order_line_id)) errors.push({ field, message: 'Choose an available order line.' })
+    else if (seen.has(line.purchase_order_line_id)) errors.push({ field, message: 'An order line may appear only once in this receipt.' })
+    else if (order && !order.lines.some((item) => item.id === line.purchase_order_line_id)) errors.push({ field, message: 'Choose a line from the selected order.' })
+    seen.add(line.purchase_order_line_id)
+    if (!validDecimal(line.quantity_received, 3, QUANTITY_MAX, true)) errors.push({ field: `lines[${index}].quantity_received`, message: `Enter a positive decimal string, up to ${QUANTITY_MAX}, with at most 3 fractional digits.` })
+  })
+  return errors
+}
+
+export function validateInvoice(input: InvoiceCreate, order?: PurchaseOrder | null): ErrorDetail[] {
+  // Reuse the same priced-line, currency, notes and quantity/price validation.
+  const errors = validateOrder({ supplier_id: input.supplier_id, po_number: input.invoice_number, order_date: input.invoice_date, currency: input.currency, notes: input.notes, lines: input.lines }).map((detail) => ({ ...detail, field: detail.field === 'po_number' ? 'invoice_number' : detail.field === 'order_date' ? 'invoice_date' : detail.field }))
+  if (input.purchase_order_id != null && !isUuid(input.purchase_order_id)) errors.push({ field: 'purchase_order_id', message: 'Choose an available order or no order.' })
+  if (order && (order.id !== input.purchase_order_id || order.supplier_id !== input.supplier_id)) errors.push({ field: 'purchase_order_id', message: 'Choose an order belonging to the selected supplier.' })
+  if (input.due_date != null && (!validDate(input.due_date) || (validDate(input.invoice_date) && input.due_date < input.invoice_date))) errors.push({ field: 'due_date', message: 'Enter a calendar date on or after the invoice date, or leave it blank.' })
+  if (!validDecimal(input.tax_amount, 2, MONEY_MAX, false)) errors.push({ field: 'tax_amount', message: `Enter a nonnegative tax amount, up to ${MONEY_MAX}, with at most 2 fractional digits. Enter 0.00 if there is no tax.` })
+  if (Array.isArray(input.lines)) input.lines.forEach((line, index) => {
+    if (line.purchase_order_line_id == null) return
+    const field = `lines[${index}].purchase_order_line_id`
+    if (!input.purchase_order_id) errors.push({ field, message: 'Choose an order before mapping a line.' })
+    else if (!isUuid(line.purchase_order_line_id)) errors.push({ field, message: 'Choose an available order line, or leave the line unmapped.' })
+    else if (order && !order.lines.some((item) => item.id === line.purchase_order_line_id)) errors.push({ field, message: 'Choose a line from the selected order.' })
+  })
+  return errors
+}
+
+export function deliveryPayload(draft: DeliveryDraft): DeliveryReceiptCreate {
+  return { purchase_order_id: draft.order?.id ?? '', receipt_number: draft.receipt_number.trim(), received_date: draft.received_date,
+    notes: draft.notes.trim() || null, lines: draft.lines.map(({ purchase_order_line_id, quantity_received }) => ({ purchase_order_line_id, quantity_received })) }
+}
+
+export function invoicePayload(draft: InvoiceDraft): InvoiceCreate {
+  return { supplier_id: draft.supplier?.id ?? '', purchase_order_id: draft.order?.id ?? null,
+    invoice_number: draft.invoice_number.trim(), invoice_date: draft.invoice_date, due_date: draft.due_date || null,
+    currency: 'EUR', tax_amount: draft.tax_amount, notes: draft.notes.trim() || null,
+    lines: draft.lines.map(({ description, quantity, unit_price, purchase_order_line_id }) => ({ description: description.trim(), quantity, unit_price, purchase_order_line_id: purchase_order_line_id ?? null })) }
+}
+
+export function newDeliveryDraft(): DeliveryDraft {
+  return { order: null, receipt_number: '', received_date: '', notes: '', lines: [] }
+}
+
+export function newInvoiceDraft(): InvoiceDraft {
+  return { supplier: null, order: null, invoice_number: '', invoice_date: '', due_date: '', tax_amount: '', notes: '', lines: [newLine()] }
 }
 
 export function validateSupplier(input: SupplierCreate): ErrorDetail[] {

@@ -1,5 +1,5 @@
-import type { ErrorDetail, OrderParams, PageParams, PurchaseOrder, PurchaseOrderCreate, PurchaseOrderSummary, RecordPage, Supplier, SupplierCreate } from './types.ts'
-import { isUuid, MONEY_MAX, PRICE_MAX, QUANTITY_MAX, validDate, validDecimal, validateOrder, validateSupplier } from './validation.ts'
+import type { DeliveryParams, DeliveryReceipt, DeliveryReceiptCreate, DeliveryReceiptSummary, ErrorDetail, Invoice, InvoiceCreate, InvoiceParams, InvoiceSummary, OrderParams, PageParams, PurchaseOrder, PurchaseOrderCreate, PurchaseOrderSummary, RecordPage, Supplier, SupplierCreate } from './types.ts'
+import { isUuid, MONEY_MAX, PRICE_MAX, QUANTITY_MAX, validDate, validDecimal, validateDelivery, validateInvoice, validateOrder, validateSupplier } from './validation.ts'
 import { DEFAULT_PAGE, validPage } from './navigation.ts'
 
 export type FailureKind = 'validation' | 'conflict' | 'missing' | 'unavailable' | 'server' | 'network' | 'timeout' | 'cancelled' | 'invalid-response'
@@ -37,6 +37,26 @@ function isOrder(value: unknown): value is PurchaseOrder {
   if (!object(value) || !Array.isArray(value.lines)) return false
   const lines: unknown[] = value.lines
   return isOrderSummary(value) && lines.length >= 1 && lines.length <= 100 && lines.every((line, index) => object(line) && recordFields(line) && line.purchase_order_id === value.id && line.workspace_id === value.workspace_id && line.line_no === index + 1 && typeof line.description === 'string' && decimalOutput(line.quantity, 3, QUANTITY_MAX, true) && decimalOutput(line.unit_price, 4, PRICE_MAX, false) && decimalOutput(line.line_total, 2, MONEY_MAX, false))
+}
+
+function isDeliverySummary(value: unknown): value is DeliveryReceiptSummary {
+  return object(value) && recordFields(value) && isUuid(value.purchase_order_id) && typeof value.receipt_number === 'string' && validDate(value.received_date) && nullableText(value.notes)
+}
+
+function isDelivery(value: unknown): value is DeliveryReceipt {
+  if (!object(value) || !Array.isArray(value.lines)) return false
+  const lines: unknown[] = value.lines
+  return isDeliverySummary(value) && lines.length >= 1 && lines.length <= 100 && lines.every((line, index) => object(line) && recordFields(line) && line.workspace_id === value.workspace_id && line.delivery_receipt_id === value.id && line.purchase_order_id === value.purchase_order_id && isUuid(line.purchase_order_line_id) && line.line_no === index + 1 && decimalOutput(line.quantity_received, 3, QUANTITY_MAX, true))
+}
+
+function isInvoiceSummary(value: unknown): value is InvoiceSummary {
+  return object(value) && recordFields(value) && isUuid(value.supplier_id) && (value.purchase_order_id === null || isUuid(value.purchase_order_id)) && typeof value.invoice_number === 'string' && validDate(value.invoice_date) && (value.due_date === null || (validDate(value.due_date) && value.due_date >= value.invoice_date)) && value.currency === 'EUR' && value.status === 'draft' && nullableText(value.notes) && decimalOutput(value.subtotal, 2, MONEY_MAX, false) && decimalOutput(value.tax_amount, 2, MONEY_MAX, false) && decimalOutput(value.total, 2, MONEY_MAX, false)
+}
+
+function isInvoice(value: unknown): value is Invoice {
+  if (!object(value) || !Array.isArray(value.lines)) return false
+  const lines: unknown[] = value.lines
+  return isInvoiceSummary(value) && lines.length >= 1 && lines.length <= 100 && lines.every((line, index) => object(line) && recordFields(line) && line.workspace_id === value.workspace_id && line.invoice_id === value.id && line.line_no === index + 1 && typeof line.description === 'string' && decimalOutput(line.quantity, 3, QUANTITY_MAX, true) && decimalOutput(line.unit_price, 4, PRICE_MAX, false) && decimalOutput(line.line_total, 2, MONEY_MAX, false) && (line.purchase_order_line_id === null || (value.purchase_order_id !== null && isUuid(line.purchase_order_line_id))))
 }
 
 function pageOf<T>(isItem: (item: unknown) => item is T) {
@@ -129,5 +149,47 @@ export function createPurchaseOrder(input: PurchaseOrderCreate, options: Request
   return request('/purchase-orders', isOrder, options, {
     supplier_id: input.supplier_id, po_number: input.po_number.trim(), order_date: input.order_date, currency: 'EUR', notes: input.notes?.trim() || null,
     lines: input.lines.map((line) => ({ description: line.description.trim(), quantity: line.quantity, unit_price: line.unit_price })),
+  })
+}
+
+export function getDeliveryReceipts(page: DeliveryParams = DEFAULT_PAGE, options: RequestOptions = {}) {
+  const query = queryFor(page)
+  if (page.purchase_order_id !== undefined) {
+    if (!isUuid(page.purchase_order_id)) throw new ApiFailure('validation', 'Choose an available purchase order.')
+    query.set('purchase_order_id', page.purchase_order_id)
+  }
+  return request(`/delivery-receipts?${query}`, pageOf(isDeliverySummary), options)
+}
+export function getDeliveryReceipt(id: string, options: RequestOptions = {}) {
+  return request(`/delivery-receipts/${encodeURIComponent(id)}`, isDelivery, options)
+}
+export function createDeliveryReceipt(input: DeliveryReceiptCreate, options: RequestOptions = {}) {
+  const details = validateDelivery(input)
+  if (details.length) return Promise.reject(new ApiFailure('validation', 'Some fields are invalid.', details))
+  return request('/delivery-receipts', isDelivery, options, {
+    purchase_order_id: input.purchase_order_id, receipt_number: input.receipt_number.trim(), received_date: input.received_date, notes: input.notes?.trim() || null,
+    lines: input.lines.map((line) => ({ purchase_order_line_id: line.purchase_order_line_id, quantity_received: line.quantity_received })),
+  })
+}
+export function getInvoices(page: InvoiceParams = DEFAULT_PAGE, options: RequestOptions = {}) {
+  const query = queryFor(page)
+  for (const field of ['supplier_id', 'purchase_order_id'] as const) {
+    if (page[field] !== undefined) {
+      if (!isUuid(page[field])) throw new ApiFailure('validation', 'Choose an available supplier or purchase order.')
+      query.set(field, page[field])
+    }
+  }
+  return request(`/invoices?${query}`, pageOf(isInvoiceSummary), options)
+}
+export function getInvoice(id: string, options: RequestOptions = {}) {
+  return request(`/invoices/${encodeURIComponent(id)}`, isInvoice, options)
+}
+export function createInvoice(input: InvoiceCreate, options: RequestOptions = {}) {
+  const details = validateInvoice(input)
+  if (details.length) return Promise.reject(new ApiFailure('validation', 'Some fields are invalid.', details))
+  return request('/invoices', isInvoice, options, {
+    supplier_id: input.supplier_id, purchase_order_id: input.purchase_order_id ?? null, invoice_number: input.invoice_number.trim(), invoice_date: input.invoice_date,
+    due_date: input.due_date ?? null, currency: 'EUR', tax_amount: input.tax_amount, notes: input.notes?.trim() || null,
+    lines: input.lines.map((line) => ({ description: line.description.trim(), quantity: line.quantity, unit_price: line.unit_price, purchase_order_line_id: line.purchase_order_line_id ?? null })),
   })
 }

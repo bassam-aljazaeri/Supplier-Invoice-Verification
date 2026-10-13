@@ -1,7 +1,23 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { getPurchaseOrder, getSupplier } from '../../api.ts'
 import { useRead } from '../../hooks/useBusiness.ts'
 import RequestState from '../../components/RequestState.tsx'
+import DeliveryList from '../../components/DeliveryList.tsx'
+import InvoiceList from '../../components/InvoiceList.tsx'
+import { listHash } from '../../navigation.ts'
+
+function OrderRelatedRecords({ id, supplierId }: { id: string; supplierId: string }) {
+  const [deliveryOffset, setDeliveryOffset] = useState(0)
+  const [invoiceOffset, setInvoiceOffset] = useState(0)
+  return <>
+    <section className="related-records" aria-labelledby="order-deliveries"><div className="panel-heading"><h3 id="order-deliveries">Delivery records</h3><a href={listHash('deliveries', { limit: 20, offset: 0, purchase_order_id: id })}>View order deliveries</a></div>
+      <DeliveryList page={{ limit: 20, offset: deliveryOffset, purchase_order_id: id }} onPage={setDeliveryOffset} />
+    </section>
+    <section className="related-records" aria-labelledby="order-invoices"><div className="panel-heading"><h3 id="order-invoices">Invoices</h3><a href={listHash('invoices', { limit: 20, offset: 0, purchase_order_id: id, supplier_id: supplierId })}>View order invoices</a></div>
+      <InvoiceList page={{ limit: 20, offset: invoiceOffset, purchase_order_id: id, supplier_id: supplierId }} onPage={setInvoiceOffset} />
+    </section>
+  </>
+}
 
 function OrderSupplier({ id }: { id: string }) {
   const load = useCallback((signal: AbortSignal) => getSupplier(id, { signal }), [id])
@@ -23,6 +39,7 @@ export default function PurchaseOrderDetailPage({ id }: { id: string }) {
         {result.data.lines.map((line) => <tr key={line.id}><td>{line.line_no}</td><td>{line.description}</td><td className="decimal">{line.quantity}</td><td className="decimal">{line.unit_price}</td><td className="decimal">{line.line_total}</td></tr>)}
       </tbody></table></div>
       <p className="saved-total">Subtotal (EUR): <strong className="decimal">{result.data.subtotal}</strong></p>
+      <OrderRelatedRecords id={id} supplierId={result.data.supplier_id} />
     </>}
   </section>
 }

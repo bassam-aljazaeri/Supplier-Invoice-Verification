@@ -3,10 +3,10 @@
 AI-assisted supplier invoice extraction, matching, review, and approval.
 
 ## Status
-The local website has Status, supplier, and purchase-order pages. Supplier,
-purchase-order, delivery-record, and draft-invoice APIs store records in PostgreSQL.
-Step 3.5A adds website navigation and supplier/order list, creation, and detail
-views. Delivery/invoice pages and full demo data seeding remain later work.
+The local website has Status, supplier, purchase-order, delivery-record, and
+draft-invoice pages. These APIs store records in PostgreSQL. Step 3.5B adds
+delivery/invoice list, creation, detail, and linked-record views. Full demo seeding,
+automatic matching, and the later review/approval workflow remain future work.
 
 ## First release
 English invoices in EUR; one purchase order per invoice; single-page
@@ -482,7 +482,7 @@ on a selected order, omit or null only `purchase_order_line_id`.
 
 Repeating these creates returns 409. Retrieve existing records, or use new fictional
 document numbers for another run. Authentication, uploads, AI, automatic matching,
-approval, notifications, exports, delivery/invoice pages, and full demo seeding
+approval, notifications, exports, and full demo seeding
 remain later work.
 
 ### Isolated Step 3.4 checks
@@ -508,9 +508,9 @@ completed checks and pending user/online CI verification.
 
 ## Supplier and purchase-order website (Step 3.5A)
 
-The navigation shows **Supplier-Invoice-Verification**, Status, Suppliers, and
-Purchase orders. Delivery/invoice navigation will be added with those pages in
-Step 3.5B. Native hash links support local deep links and browser history without
+Step 3.5A introduced Status, Suppliers, and Purchase orders navigation.
+Step 3.5B adds Delivery records and Invoices, described below. Native hash links
+support local deep links and browser history without
 adding a routing dependency. An empty hash opens Status; unknown paths or invalid
 page parameters show Page not found with a link to Status.
 
@@ -615,3 +615,122 @@ The Node tests use simulated responses and pure navigation/validation/request
 helpers; they do not establish that these real browser workflows passed.
 See [progress](docs/progress.md) for the actual automated results and remaining
 browser/online CI verification.
+
+## Delivery-record and draft-invoice website (Step 3.5B)
+
+Navigation retains **Supplier-Invoice-Verification**, Status, Suppliers, and
+Purchase orders, and adds Delivery records and Invoices. The website uses the
+existing React/TypeScript, native fetch, CSS, hash links, and `/api` Vite proxy;
+no new dependency is needed. Website `#/deliveries` calls backend
+`/api/delivery-receipts`, not `/api/deliveries`.
+
+| Route | Page |
+| --- | --- |
+| `#/deliveries` | Paginated receipt numbers/dates, detail links, and order links. |
+| `#/deliveries/new` | Paginated order choice, receipt number/date/notes, descriptive line choices, and received quantities. |
+| `#/deliveries/{id}` | Saved receipt fields/quantities, order-line descriptions, and linked order/supplier. |
+| `#/invoices` | Paginated invoice numbers/dates, draft status, and EUR totals. |
+| `#/invoices/new` | Supplier, optional filtered order, dates, explicit tax, notes, and priced lines with optional manual mappings. |
+| `#/invoices/{id}` | Saved draft fields/lines, supplier/optional-order links, subtotal, tax, and total. |
+
+Delivery list hashes may filter by `purchase_order_id`; invoice hashes may filter
+by `supplier_id`, `purchase_order_id`, or both together. `limit` and `offset` use
+the same bounds as the existing pages. Paging preserves filters. Order details
+now contain separate paginated delivery and invoice sections, and supplier details
+contain a paginated invoice section. Each section has its own request, retry,
+loading/error state, and page controls, so one failed related read does not hide
+the other saved records. Related sections start on their first page after reload.
+
+### Delivery entry
+
+Choose an order by its readable number/date; Previous/Next browse orders in pages
+of 20. The form fetches that selected order's lines and displays their descriptions
+with checkboxes. Choose at least one line and enter each received quantity as a
+positive decimal string. A checkbox permits only one entry for an order line in
+the receipt. Changing the order clears the prior line selections immediately.
+Obsolete order-detail results are cancelled/ignored and cannot restore old choices.
+Multiple receipts for an order are allowed, including positive quantities above
+ordered quantities; no cumulative comparison or discrepancy detection is added.
+
+Saved receipt responses contain received quantities and line references; the
+detail view retrieves the order separately for descriptions and supplier links.
+If that related lookup fails, receipt fields and quantities remain visible with
+their order links and an independent Retry action.
+
+### Draft invoice entry
+
+Choose a supplier by code/name, using the existing paginated chooser. The optional
+order chooser lists only that supplier's orders, also in pages of 20. Select
+**No purchase order** to save without one. Enter number/date, optional due date,
+fixed EUR currency, optional notes, and an explicit nonnegative invoice-level
+`tax_amount`. Tax starts blank; enter `0.00` if there is no tax. It is an amount,
+not a percentage or an inferred tax calculation.
+
+Priced lines keep descriptions, quantities, and prices as entered strings.
+With an order selected and its current details loaded, each line may use a
+descriptive manual mapping or remain **Unmapped**. No order means all mappings
+must be empty. Changing supplier clears the order and all mappings; changing
+order clears mappings. Other typed values and stable unsaved line keys remain.
+Old supplier/order results cannot populate the current choices. Selection of an
+order line does not copy prices, descriptions, or quantities into invoice lines.
+
+The server assigns `draft`, calculates each rounded line total and subtotal, then
+adds the entered tax. The website displays the returned decimal strings and never
+performs authoritative financial calculations. Requests omit status, totals,
+local keys, workspace fields, and internal line order IDs. Required text/date,
+decimal bounds/scales, due-date ordering, 1-100 lines, duplicate receipt choices,
+and selected-order ownership/membership are validated before save; backend
+validation remains authoritative.
+
+Both new forms reuse disabled/guarded saving, field labels, inline errors, summary,
+focus behavior, keyboard controls, full-body five-second requests, and cancellation.
+Input and error feedback remain in memory across navigation in the same tab.
+Interrupted/network/timed-out save responses may mean a document was saved: check
+the linked list in a new tab for its number before a manual retry. POST requests
+are never automatically retried. Successful creation clears the corresponding
+draft and navigates using the returned top-level document ID. Full reload clears
+unsaved drafts; saved deep links retrieve records from the API.
+
+### Checks and remaining browser verification
+
+From **Windows host PowerShell** in the project directory:
+
+```powershell
+Set-Location frontend
+npm.cmd test
+npm.cmd run lint
+npm.cmd run build
+npm.cmd run dev
+```
+
+Open `http://127.0.0.1:5173`. Use existing fictional records for read-only checks.
+Exercise creation only in your chosen synthetic verification stack; Save writes
+records to the database served by that API. No development writes or actual
+browser checks were performed during Step 3.5B implementation.
+
+1. Check all five navigation links, empty-hash Status, unknown routes, Back/Forward,
+   refresh, list/filter URLs, and saved delivery/invoice deep links.
+2. For the existing fictional 10-keyboard order at EUR 25, create a delivery of
+   `8.000` against the descriptive Keyboard checkbox. Change orders during delayed
+   detail loading and confirm old lines/quantities are cleared and do not reappear.
+3. Create a draft invoice for `10.000` keyboards at `25.0000`, with tax `0.00`.
+   Confirm saved subtotal/total `250.00`, received quantity `8.000`, draft status,
+   links, and independently paginated related records. No discrepancy flags should appear.
+4. Exercise supplier/order choices beyond page one, empty selectors, no-order
+   invoices, selected-order invoices with unmapped lines, mixed/manual mappings,
+   and supplier/order changes clearing dependencies while preserving other input.
+5. Check invalid decimals/dates/early due dates, omitted tax, duplicate numbers,
+   missing references, server/network/timeouts, retained input, error summary and
+   first-error focus. Verify labels, keyboard controls, visible focus, and narrow layouts.
+6. Delay/fail one related list and confirm the other sections remain usable. Leave
+   during a read or save and verify obsolete responses do not update/redirect the
+   new page. Check uncertain-save feedback/list lookup before retrying and confirm
+   repeat Save clicks do not issue multiple POSTs.
+
+The Node tests cover synthetic contracts, dependent selections, payloads, decimals,
+filters, errors, cancellation, and uncertain writes using mocks/helpers. They do
+not prove these real browser workflows or saved-record persistence through the
+website. The automated outcomes and pending browser/online CI checks are recorded
+separately in [progress](docs/progress.md). Seeding, saved-record editing/deletion,
+authentication, uploads, AI, matching, approval, exports, and cloud deployment
+remain later milestones.
