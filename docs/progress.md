@@ -1,7 +1,7 @@
 # Progress
 
-Current milestone: 3 - Manual business records
-Current task: Step 3.7 - final GitHub checks and pull-request merge
+Current milestone: 3 - Manual business records (implementation and validation complete)
+Current task: Merge pull request #2 and synchronize local main
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -375,9 +375,18 @@ Step 3.6 remaining manual/online checks:
 - Frontend checks were not repeated because frontend files are unchanged; the previous 140-test/lint/build results remain historical evidence, and the existing frontend CI job remains intact.
 - The actual `.env` was not read, printed, created, or modified; `Microsoft/` remains untouched. No development database contents were changed. Use `.\scripts\check-backend.ps1` for repeatable isolated backend verification; README/demo guide provide exact opt-in local setup commands separately.
 
+Step 3 final verification:
+- Codex reported 530 backend tests passing in the disposable checker.
+- Disposable verification confirmed repeated seeding and persistence after API/PostgreSQL restart.
+- User-run frontend checks passed: 140 tests, lint, and production build.
+- User confirmed the manual website workflow works.
+- GitHub push and pull-request backend/frontend checks passed for commit 201d47b.
+- Pull request #2 contains the completed Milestone 3 implementation.
+- Authentication, AI extraction, automatic discrepancy detection, and approval remain later milestones.
+- User verified repeated development seeding and the linked PO-DEMO-001, DR-DEMO-001, and INV-DEMO-001 browser demonstration.
+
 Next task:
-- Stop after Step 3.6 and await the next requested checkpoint. Milestone 3 implementation and local backend verification are complete; final browser and online CI sign-off remain pending.
-- Record user-run browser verification and future online CI results separately from completed automated checks.
-- Keep saved-record editing/deletion, authentication, uploads, AI, automatic matching, approval, notifications, exports, and cloud infrastructure deferred.
+- Merge pull request #2 after the latest checks pass, then synchronize local main.
+- Review Milestone 4 skills and scope before implementation.
 
 Blockers: None recorded.
