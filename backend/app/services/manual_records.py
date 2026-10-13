@@ -58,10 +58,19 @@ def get_supplier(session: Session, workspace_id: UUID, supplier_id: UUID, *, fie
 
 
 def create_supplier(session: Session, workspace_id: UUID, payload: SupplierCreate) -> SupplierRead:
-    return save_record(session, Supplier(workspace_id=workspace_id, **payload.model_dump()), SupplierRead)
+    return save_record(session, build_supplier(workspace_id, payload), SupplierRead)
+
+
+def build_supplier(workspace_id: UUID, payload: SupplierCreate) -> Supplier:
+    return Supplier(workspace_id=workspace_id, **payload.model_dump())
 
 
 def create_purchase_order(session: Session, workspace_id: UUID, payload: PurchaseOrderCreate) -> PurchaseOrderRead:
+    return save_record(session, build_purchase_order(session, workspace_id, payload), PurchaseOrderRead)
+
+
+def build_purchase_order(session: Session, workspace_id: UUID, payload: PurchaseOrderCreate) -> PurchaseOrder:
+    """Validate and build; the caller owns persistence and its transaction."""
     get_supplier(session, workspace_id, payload.supplier_id, field="supplier_id")
     amounts, subtotal = calculate_priced_lines(payload.lines)
     order = PurchaseOrder(
@@ -73,7 +82,7 @@ def create_purchase_order(session: Session, workspace_id: UUID, payload: Purchas
             quantity=line.quantity, unit_price=line.unit_price, line_total=amounts[index],
         ) for index, line in enumerate(payload.lines)],
     )
-    return save_record(session, order, PurchaseOrderRead)
+    return order
 
 
 def calculate_priced_lines(lines):
@@ -119,6 +128,10 @@ def validate_order_line(session: Session, workspace_id: UUID, order_id: UUID, li
 
 
 def create_delivery_receipt(session: Session, workspace_id: UUID, payload: DeliveryReceiptCreate) -> DeliveryReceiptRead:
+    return save_record(session, build_delivery_receipt(session, workspace_id, payload), DeliveryReceiptRead)
+
+
+def build_delivery_receipt(session: Session, workspace_id: UUID, payload: DeliveryReceiptCreate) -> DeliveryReceipt:
     order = get_purchase_order(session, workspace_id, payload.purchase_order_id, field="purchase_order_id")
     seen = set()
     for index, line in enumerate(payload.lines):
@@ -135,10 +148,14 @@ def create_delivery_receipt(session: Session, workspace_id: UUID, payload: Deliv
             purchase_order_line_id=line.purchase_order_line_id, quantity_received=line.quantity_received,
         ) for index, line in enumerate(payload.lines)],
     )
-    return save_record(session, receipt, DeliveryReceiptRead)
+    return receipt
 
 
 def create_invoice(session: Session, workspace_id: UUID, payload: InvoiceCreate) -> InvoiceRead:
+    return save_record(session, build_invoice(session, workspace_id, payload), InvoiceRead)
+
+
+def build_invoice(session: Session, workspace_id: UUID, payload: InvoiceCreate) -> Invoice:
     get_supplier(session, workspace_id, payload.supplier_id, field="supplier_id")
     if payload.purchase_order_id is not None:
         order = get_purchase_order(session, workspace_id, payload.purchase_order_id, field="purchase_order_id")
@@ -167,7 +184,7 @@ def create_invoice(session: Session, workspace_id: UUID, payload: InvoiceCreate)
             purchase_order_id=payload.purchase_order_id if line.purchase_order_line_id is not None else None,
         ) for index, line in enumerate(payload.lines)],
     )
-    return save_record(session, invoice, InvoiceRead)
+    return invoice
 
 
 def get_delivery_receipt(session: Session, workspace_id: UUID, receipt_id: UUID) -> DeliveryReceipt:

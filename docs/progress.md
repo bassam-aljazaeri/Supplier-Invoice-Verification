@@ -1,7 +1,7 @@
 # Progress
 
 Current milestone: 3 - Manual business records
-Current task: Step 3.6 - repeatable demo data and final verification
+Current task: Step 3.7 - final GitHub checks and pull-request merge
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -26,6 +26,7 @@ Completed:
 - Completed Step 3.4 delivery-record and draft-invoice APIs, business OpenAPI error contracts, and isolated API verification
 - Completed Step 3.5A website navigation, supplier/purchase-order pages, and frontend helper verification
 - Completed Step 3.5B delivery-record/draft-invoice website pages, connected details, and frontend helper verification
+- Completed Step 3.6 repeatable fictional demo seeding and disposable API persistence verification
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -341,9 +342,42 @@ Step 3.5B user verification:
 - Detailed final browser verification remains part of Step 3.6.
 - Online CI verification for the final Milestone 3 revision remains pending.
 
+Step 3.6 implementation and file purposes:
+- Added `backend/app/seed_demo.py`: explicit `python -m app.seed_demo`, fixed blueprint workspace/header/line IDs, exact fictional 10 ordered / 8 received / 10 invoiced workflow, insert-or-verify behavior, safe conflict/failure exits, and one transaction for the whole fixture.
+- Updated `backend/app/services/manual_records.py` minimally to expose noncommitting validated model builders shared by API creates and seeding. Existing APIs still use the same save helper, commit before success, and roll back/translate errors as before. Reused create schemas, scoped reference validation, money helpers, and the existing noncommitting workspace initializer.
+- Added `backend/tests/test_seed_demo.py`: opted-in PostgreSQL proofs of exact records/links/totals/draft status, repeatability including timestamps, missing-record repair, global fixed-ID and scoped natural-key conflicts, mismatched fields/mappings/extra lines, preservation of MANUAL-/UI-/other-workspace data, late database/commit failure rollback, CLI exits, next-request recovery, and test isolation.
+- Added `backend/scripts/check_demo.py`: guarded disposable-only invocation of the real seed command twice, live detail/list/filter reads, returned IDs/decimal values, status-specific OpenAPI example checks, retained full JSON snapshot, and comparison after actual API/PostgreSQL restart. Added `backend/tests/test_check_demo.py` for response/line/count/example checks, request deadlines, sanitized failures, opt-in refusal before connection/seeding/snapshot access, and capture/verify lifecycle.
+- Updated `scripts/check-backend.ps1` and `.github/workflows/ci.yml` to use that shared demo checker before/after restarting API and PostgreSQL without deleting their volume. Preserved migrations/revision checks, unique projects, generated disposable settings, guards, read-only GitHub permissions, bounded waits, failure logs, outage/recovery checks, frontend CI, and disposable cleanup.
+- Updated `backend/app/schemas/errors.py` and `backend/tests/test_openapi.py` so each documented business status illustrates its actual error code: 422 validation_error, 404 not_found, 409 conflict, 503 service_unavailable, 500 internal_error. The runtime envelope, handlers, routes, and health/readiness contracts remain unchanged.
+- Updated README with current scope, fresh build/migrate/seed/frontend instructions, fixed IDs, repeatability/conflict behavior, and disposable persistence checks. Added `docs/demo.md` with the short read-only browser demonstration and remaining browser scenarios. Updated this progress record.
+
+Step 3.6 decisions and limits:
+- The fixture uses the blueprint dates, supplier notes, optional invoice due date 2026-11-14, and explicit manual invoice-line mapping. It retains EUR, tax 0.00, total 250.00, and draft status. The difference between ordered/invoiced 10 and received 8 is visible as manual records; no discrepancy detection is added.
+- Existing fixed IDs and scoped keys must identify exactly the expected fixture, including its business fields and only its expected document line. Existing matching timestamps are preserved. Missing expected rows are inserted; existing rows are never adopted, updated, or renamed. Earlier API-created DEMO-* identifiers with generated IDs deliberately conflict even if visible values match.
+- Both workspace and business records belong to a single seed transaction. A conflict, line insert failure, or commit failure rolls back all new rows; no workspace-only intermediate commit is introduced. No import or startup invokes seed writes. Unrelated records and identical identifiers in other allowed scopes are preserved.
+- Tests retain the approved disposable PostgreSQL target and outer-transaction/savepoint fixtures, including when services or the seed commit. The shared live checker requires explicit integration opt-in, approved generated settings, the connected PostgreSQL 17 database/user and matching project marker, and migration head before invoking the seed. It has no development database fallback.
+- No dependency, lockfile, model, applied migration, database session, workspace initializer, fixture, Docker/Compose, or frontend change was necessary. No cloud resource, infrastructure, saved-record editing/deletion, authentication, uploads, AI, automatic matching, approval, notification, or export feature was added.
+
+Step 3.6 checks actually performed (2026-10-13; Windows host PowerShell, Python/checks inside Linux containers):
+- Read AGENTS.md, scope, blueprint, and progress before editing; inspected models, schemas/services, workspace seeding, fixtures/tests, Docker/Compose, checker, CI, and README. Initial Git status showed only pre-existing untracked `Microsoft/`.
+- `.\scripts\check-backend.ps1` passed, exit code 0, using project `supplier-invoice-verification-check-9918054979094a358f74631276b70576`. The Docker build retained locked dependencies. Guarded migrations applied and verified `0001_manual_records (head)`, and all 530 tests passed with PostgreSQL integration opt-in: no failures or skips. Existing foundation/schema/workspace/business API tests were retained.
+- The same checker ran workspace initialization twice, then the actual `python -m app.seed_demo` command twice. Live HTTP detail/list/filter reads confirmed fixed header/line IDs, exact links, one fixture line per document, ordered 10.000, received 8.000, invoiced 10.000 at 25.0000, tax 0.00, total 250.00, and draft status. The two full snapshots, including timestamps and counts, matched.
+- Restarted only that disposable project's API/PostgreSQL containers with the volume retained. Bounded recovery returned `/health` 200 and `/ready` 200; fresh live API reads matched the retained snapshot exactly. Live OpenAPI responses advertised the appropriate business error example for each status on all 12 business operations.
+- Retained actual outage/recovery verification: stopping disposable PostgreSQL/Redis kept `/health` 200 and made `/ready` 503 with both unavailable; starting them restored `/ready` 200 with both healthy. The checker removed its containers, network, volume, and generated temporary settings file.
+- Ran ordinary `pytest -q -rs` in the new API image with `docker run --rm --network none` and no opt-in/database: 142 tests passed, 388 PostgreSQL tests skipped with the explicit disposable-opt-in reason, exit code 0. No development database connection was possible.
+- Validated the changed GitHub workflow with cached `rhysd/actionlint:1.7.12`, networking disabled: passed, exit code 0. Parsed the PowerShell checker successfully; all 21 README/demo PowerShell blocks parsed successfully. Final `git diff --check` and whitespace/final-newline checks on all 12 changed/new files passed.
+- Final Docker metadata confirmed the disposable project's containers, network, volume, and generated temporary settings were absent. Before/after status showed the development API still running and its PostgreSQL/Redis healthy. Git comparison confirmed frontend, dependencies/lockfiles, models, sessions, workspace initializer, fixtures, migrations, Docker/Compose, instructions, scope, and blueprint unchanged.
+- Both test runs reported the existing unsuppressed Starlette TestClient/httpx deprecation warning. It did not fail checks; no unrelated dependency change was made.
+
+Step 3.6 remaining manual/online checks:
+- Follow `docs/demo.md` after deliberately choosing and initializing a local fictional demo database. Codex did not run this seed against development, use its API/SQL records, or exercise a browser. Final rendering, links/history/deep links, keyboard/narrow layout, selector pagination, input/failure recovery, uncertain saves, and stale-response navigation still need actual browser observations. Existing Step 3.5A/3.5B user observations above remain separate evidence.
+- Online GitHub CI for the final Milestone 3 revision remains pending; actionlint and the local disposable run do not establish an online pass. No commit or push was performed.
+- Frontend checks were not repeated because frontend files are unchanged; the previous 140-test/lint/build results remain historical evidence, and the existing frontend CI job remains intact.
+- The actual `.env` was not read, printed, created, or modified; `Microsoft/` remains untouched. No development database contents were changed. Use `.\scripts\check-backend.ps1` for repeatable isolated backend verification; README/demo guide provide exact opt-in local setup commands separately.
+
 Next task:
-- Stop after Step 3.5B and await the next requested checkpoint.
-- Record user-run browser verification and future online CI results separately from the completed mock/helper checks.
-- Keep full demo seeding, saved-record editing/deletion, authentication, uploads, AI, automatic matching, approval, notifications, exports, and cloud infrastructure deferred.
+- Stop after Step 3.6 and await the next requested checkpoint. Milestone 3 implementation and local backend verification are complete; final browser and online CI sign-off remain pending.
+- Record user-run browser verification and future online CI results separately from completed automated checks.
+- Keep saved-record editing/deletion, authentication, uploads, AI, automatic matching, approval, notifications, exports, and cloud infrastructure deferred.
 
 Blockers: None recorded.

@@ -91,6 +91,17 @@ jobs:
         run: |
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T api python -m app.seed_workspace
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T api python -m app.seed_workspace
+      - name: Seed demo twice and capture live API records
+        timeout-minutes: 3
+        run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_demo capture
+      - name: Restart API and PostgreSQL with volumes retained
+        timeout-minutes: 2
+        run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" restart --timeout 10 api db
+      - name: Verify recovery and persisted demo through the live API
+        timeout-minutes: 2
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T api python scripts/check_endpoints.py --timeout 60
+          docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_demo verify
       - name: Verify health stays available when dependencies stop
         timeout-minutes: 2
         run: |

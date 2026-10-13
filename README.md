@@ -4,9 +4,13 @@ AI-assisted supplier invoice extraction, matching, review, and approval.
 
 ## Status
 The local website has Status, supplier, purchase-order, delivery-record, and
-draft-invoice pages. These APIs store records in PostgreSQL. Step 3.5B adds
-delivery/invoice list, creation, detail, and linked-record views. Full demo seeding,
-automatic matching, and the later review/approval workflow remain future work.
+draft-invoice pages backed by PostgreSQL. Step 3.6 adds an explicit repeatable
+fictional demo and disposable persistence verification. This milestone is a
+local manual-record application. Extraction, automatic discrepancy detection,
+authentication, and approval remain later work.
+
+For setup and the 10 ordered / 8 delivered / 10 invoiced demonstration, see
+[the demo guide](docs/demo.md) and [the seed instructions below](#repeatable-fictional-demo-step-36).
 
 ## First release
 English invoices in EUR; one purchase order per invoice; single-page
@@ -94,9 +98,13 @@ checks use real HTTP inside the Linux API container.
 
 Compose startup waits at most 90 seconds for running/healthy services.
 The HTTP checker has a 60-second budget and verifies both status codes and
-complete JSON results. After pytest, the backend job initializes only the demo
-workspace twice to check repeatability, then stops its PostgreSQL and
-Redis containers, checks that `/health` remains HTTP 200 while `/ready` reports
+complete JSON results. After pytest, the backend job initializes the demo
+workspace twice and runs the full demo seed twice. The shared demo checker reads
+all four documents and their lines through live HTTP, checks filtered lists and
+Swagger examples, and compares IDs, timestamps, values, and counts. It retains
+that snapshot, restarts API and PostgreSQL without removing the database volume,
+waits for recovery, and retrieves the same records to prove persistence.
+It then stops its PostgreSQL and Redis containers, checks that `/health` remains HTTP 200 while `/ready` reports
 HTTP 503 with both dependencies unavailable, and restarts them to check recovery.
 Failure logs are printed, and an `always()` cleanup step removes the project's
 containers, network, volumes, and temporary environment file. Job and step time
@@ -198,8 +206,9 @@ and does not use or reset the development database. The CI override keeps source
 mounts and host ports absent; no database port or new service has been added.
 The checker verifies real health/readiness, prepares the guarded test target,
 applies migrations, prints and verifies the head revision, runs opted-in pytest,
-initializes only the demo workspace twice, checks actual dependency outage/recovery,
-and cleans up only its disposable stack.
+initializes the workspace twice, seeds the complete demo twice, and proves its
+live API records survive an API/PostgreSQL restart with the volume retained.
+It checks actual dependency outage/recovery and cleans up only its disposable stack.
 GitHub CI performs the same migration/schema checks; frontend checks are retained.
 
 Integration-test isolation is enforced before schema writes:
@@ -259,8 +268,8 @@ The command creates only workspace ID `00000000-0000-4000-8000-000000000001`,
 slug `local-demo`, name `Local demo workspace`. Repeated execution preserves the
 same row and timestamp. Conflicting ID, slug, or name causes a clear nonzero exit
 without overwriting existing data. There are no startup/import writes and no
-suppliers, orders, deliveries, or invoices seeded. The reusable helper lets a
-later full demo seeder own its complete transaction.
+suppliers, orders, deliveries, or invoices seeded by this command. The reusable
+noncommitting helper is also used by Step 3.6's whole-demo transaction.
 
 Every business request uses that fixed workspace; clients cannot supply
 `workspace_id` in bodies or query parameters. Reads, counts, filters, references,
@@ -481,9 +490,10 @@ omit or null both the header order ID and each line mapping. For an unmapped lin
 on a selected order, omit or null only `purchase_order_line_id`.
 
 Repeating these creates returns 409. Retrieve existing records, or use new fictional
-document numbers for another run. Authentication, uploads, AI, automatic matching,
-approval, notifications, exports, and full demo seeding
-remain later work.
+document numbers for another run. Step 3.6 adds a separate repeatable fixture
+command; ordinary API creates still return 409 for duplicate identifiers.
+Authentication, uploads, AI, automatic matching, approval, notifications, and
+exports remain later work.
 
 ### Isolated Step 3.4 checks
 
@@ -731,6 +741,95 @@ The Node tests cover synthetic contracts, dependent selections, payloads, decima
 filters, errors, cancellation, and uncertain writes using mocks/helpers. They do
 not prove these real browser workflows or saved-record persistence through the
 website. The automated outcomes and pending browser/online CI checks are recorded
-separately in [progress](docs/progress.md). Seeding, saved-record editing/deletion,
+separately in [progress](docs/progress.md). Saved-record editing/deletion,
 authentication, uploads, AI, matching, approval, exports, and cloud deployment
 remain later milestones.
+
+## Repeatable fictional demo (Step 3.6)
+
+Start with Docker Desktop running Linux containers and existing local database
+settings configured as in the foundation setup. From the project directory, use
+these **Windows host PowerShell commands**. Alembic and Python execute inside
+the **Linux API container**; host Python or uv is not required.
+
+```powershell
+docker compose up --build -d
+docker compose exec -T api alembic upgrade head
+docker compose exec -T api alembic current
+docker compose exec -T api python -m app.seed_demo
+docker compose exec -T api python -m app.seed_demo
+```
+
+Expect `0001_manual_records (head)` and a successful fictional-demo summary on
+each seed. The seed initializes the fixed workspace if missing; a separate
+`seed_workspace` run is optional. These commands intentionally write your chosen
+local demo database. Codex ran seeding only in the guarded disposable checker,
+never against the development database.
+
+Open a second **Windows host PowerShell** terminal in the project directory:
+
+```powershell
+Set-Location frontend
+npm.cmd ci
+npm.cmd run dev
+```
+
+Open `http://127.0.0.1:5173/#/status`, then follow [the browser demonstration](docs/demo.md).
+Stop Vite before `npm ci` if it is already running. The documented fixed IDs are
+for this fixture; ordinary forms continue to use returned server IDs.
+
+| Record | Fixed ID | Expected data |
+| --- | --- | --- |
+| Workspace | `00000000-0000-4000-8000-000000000001` | `local-demo`, Local demo workspace |
+| Supplier | `10000000-0000-4000-8000-000000000001` | DEMO-OFFICE-001, Demo Office Supplies |
+| Purchase order | `20000000-0000-4000-8000-000000000001` | PO-DEMO-001, 2026-10-13, 10 keyboards at EUR 25, subtotal 250.00 |
+| Order line | `21000000-0000-4000-8000-000000000001` | Keyboard, quantity 10.000, unit price 25.0000 |
+| Delivery receipt | `30000000-0000-4000-8000-000000000001` | DR-DEMO-001, 2026-10-14, 8.000 received |
+| Receipt line | `31000000-0000-4000-8000-000000000001` | References the fixed order line |
+| Invoice | `40000000-0000-4000-8000-000000000001` | INV-DEMO-001, 2026-10-15, due 2026-11-14, draft, subtotal/total 250.00, tax 0.00 |
+| Invoice line | `41000000-0000-4000-8000-000000000001` | Keyboard, quantity 10.000, unit price 25.0000, manual mapping to the fixed order line |
+
+The fixture matches the reviewed blueprint, including supplier notes and optional
+invoice due date. It uses the same create schemas, scoped reference validation,
+and Decimal calculations as API requests. All eight records are inserted or
+verified in one transaction. No import or API startup runs the seed.
+
+Repeating a successful seed preserves IDs, timestamps, values, lines, and counts.
+Missing expected records are inserted. Existing demo rows must match every
+expected business field and the exact fixed IDs; unexpected document lines also
+conflict. An occupied fixed ID or scoped identifier, conflicting workspace, or
+database failure exits nonzero and rolls back all inserts without overwriting
+anything. Errors do not print existing private values or connection details.
+Unrelated `MANUAL-*`, `UI-*`, and other-workspace records remain unchanged.
+
+If earlier manual/Swagger creates already used `DEMO-OFFICE-001`, `PO-DEMO-001`,
+`DR-DEMO-001`, or the supplier-scoped `INV-DEMO-001` with generated IDs, they
+conflict even when their visible fields look identical. The seed never adopts or
+renames them. Keep them for manual browsing, inspect the conflict, and use a
+separately chosen fresh demo database if the fixed fixture is needed; do not
+reset or delete development data to make seeding pass. Reserve the fixed demo
+identifiers for this command and use `MANUAL-*` or `UI-*` for additional examples.
+
+### Final disposable verification
+
+From **Windows host PowerShell**, without stopping the development stack:
+
+```powershell
+.\scripts\check-backend.ps1
+```
+
+The script uses generated settings and a unique disposable project with no host
+ports/source mounts. PostgreSQL tests and the shared demo checker require explicit
+opt-in, the approved database/user/host/version, and that project's database
+marker before connecting to or seeding a test target. There is no development
+fallback. The checker captures actual returned header/line IDs and decimal values,
+seeds twice, then compares the full live API snapshot after container restart.
+Recovery has a bounded 60-second wait; containers are restarted with their named
+volume intact. Final cleanup removes only the disposable project's resources.
+GitHub backend CI runs the same `scripts.check_demo` checks and retains the
+existing health/readiness/outage/recovery checks and frontend job.
+
+The automated repeatability/persistence checks use real PostgreSQL and live HTTP.
+They do not exercise website rendering or browser interactions. Use the demo guide
+for those checks, and record browser and online GitHub results separately in
+[progress](docs/progress.md). No new migration or dependency is required.

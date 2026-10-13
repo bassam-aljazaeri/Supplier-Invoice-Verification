@@ -25,12 +25,15 @@ class BusinessErrorResponse(BaseModel):
 
 
 BUSINESS_ERROR_RESPONSES = {
-    status: {"model": BusinessErrorResponse, "description": description}
-    for status, description in {
-        422: "Invalid request fields or incompatible references.",
-        404: "Record or reference not found in the active workspace.",
-        409: "Scoped identifier already exists.",
-        503: "Service or local demo workspace unavailable.",
-        500: "Unexpected failure; internal details are withheld.",
+    status: {
+        "model": BusinessErrorResponse, "description": description,
+        "content": {"application/json": {"example": {"error": {"code": code, "message": message, "details": []}}}},
+    }
+    for status, (description, code, message) in {
+        422: ("Invalid request fields or incompatible references.", "validation_error", "Some fields are invalid."),
+        404: ("Record or reference not found in the active workspace.", "not_found", "The record was not found."),
+        409: ("Scoped identifier already exists.", "conflict", "A record with this identifier already exists."),
+        503: ("Service or local demo workspace unavailable.", "service_unavailable", "The service is temporarily unavailable."),
+        500: ("Unexpected failure; internal details are withheld.", "internal_error", "The request could not be completed."),
     }.items()
 }

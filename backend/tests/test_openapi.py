@@ -26,6 +26,9 @@ def test_all_business_operations_document_actual_error_envelope(openapi, resourc
     assert success in responses
     for status in ("422", "404", "409", "503", "500"):
         assert responses[status]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/BusinessErrorResponse"}
+        example = responses[status]["content"]["application/json"]["example"]
+        assert example["error"]["code"] == {"422": "validation_error", "404": "not_found", "409": "conflict", "503": "service_unavailable", "500": "internal_error"}[status]
+        assert BusinessErrorResponse.model_validate(example).model_dump() == example
     assert "HTTPValidationError" not in json.dumps(responses)
 
 
