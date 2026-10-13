@@ -45,6 +45,10 @@ def price_string(value) -> Decimal:
     return decimal_string(value, scale=4, maximum=PRICE_MAX, positive=False)
 
 
+def money_string(value) -> Decimal:
+    return decimal_string(value, scale=2, maximum=MONEY_MAX, positive=False)
+
+
 QuantityInput = Annotated[
     Decimal, BeforeValidator(quantity_string),
     WithJsonSchema({"type": "string", "minLength": 1, "maxLength": 32, "pattern": r"^[0-9]+(?:\.[0-9]{1,3})?$"}),
@@ -52,6 +56,10 @@ QuantityInput = Annotated[
 PriceInput = Annotated[
     Decimal, BeforeValidator(price_string),
     WithJsonSchema({"type": "string", "minLength": 1, "maxLength": 32, "pattern": r"^[0-9]+(?:\.[0-9]{1,4})?$"}),
+]
+MoneyInput = Annotated[
+    Decimal, BeforeValidator(money_string),
+    WithJsonSchema({"type": "string", "minLength": 1, "maxLength": 32, "pattern": r"^[0-9]+(?:\.[0-9]{1,2})?$"}),
 ]
 QuantityRead = Annotated[Decimal, Field(gt=0, le=Decimal(QUANTITY_MAX)), PlainSerializer(lambda value: format(value, ".3f"), return_type=str)]
 PriceRead = Annotated[Decimal, Field(ge=0, le=Decimal(PRICE_MAX)), PlainSerializer(lambda value: format(value, ".4f"), return_type=str)]

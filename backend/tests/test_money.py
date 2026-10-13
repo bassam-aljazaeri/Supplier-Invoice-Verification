@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.purchase_order import PurchaseOrderCreate
-from app.services.money import MAX_AMOUNT, MoneyError, calculate_line_total, sum_line_totals
+from app.services.money import MAX_AMOUNT, MoneyError, calculate_invoice_total, calculate_line_total, sum_line_totals
 
 
 def order_payload(**overrides):
@@ -33,6 +33,24 @@ def test_money_bounds_and_calculated_overflow():
         calculate_line_total(Decimal("999999999.999"), Decimal("9999999999.9999"))
     with pytest.raises(MoneyError, match="subtotal exceeds"):
         sum_line_totals([MAX_AMOUNT, Decimal("0.01")])
+
+
+def test_invoice_total_adds_cent_tax_with_independent_precision():
+    with localcontext() as context:
+        context.prec = 2
+        context.rounding = ROUND_DOWN
+        assert calculate_invoice_total(Decimal("250.00"), Decimal("50.00")) == Decimal("300.00")
+        assert calculate_invoice_total(MAX_AMOUNT, Decimal("0")) == MAX_AMOUNT
+        assert calculate_invoice_total(Decimal("0.02"), Decimal("0.01")) == Decimal("0.03")
+        with pytest.raises(MoneyError, match="invoice total exceeds"):
+            calculate_invoice_total(MAX_AMOUNT, Decimal("0.01"))
+
+
+@pytest.mark.parametrize("amount", [0.1, Decimal("-1"), Decimal("NaN"), Decimal("Infinity"), Decimal("0.005"), Decimal("10000000000000000")])
+@pytest.mark.parametrize("field", ["subtotal", "tax"])
+def test_invoice_total_rejects_invalid_or_unrounded_amounts(amount, field):
+    with pytest.raises(MoneyError):
+        calculate_invoice_total(amount if field == "subtotal" else Decimal("0"), amount if field == "tax" else Decimal("0"))
 
 
 @pytest.mark.parametrize(("quantity", "price"), [

@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError, TimeoutError
 
+from app.schemas.errors import BUSINESS_ERROR_RESPONSES
+
 
 class BusinessError(Exception):
     def __init__(self, status: int, code: str, message: str, details: list[dict[str, str]] | None = None):
@@ -38,7 +40,9 @@ SAFE_FIELDS = {
     "id", "workspace_id", "created_at", "supplier_code", "name", "notes",
     "supplier_id", "po_number", "order_date", "currency", "lines", "quantity",
     "unit_price", "description", "line_no", "line_total", "subtotal", "status", "limit", "offset",
-    "purchase_order_id",
+    "purchase_order_id", "purchase_order_line_id", "receipt_number", "received_date",
+    "delivery_receipt_id", "quantity_received", "invoice_id", "invoice_number",
+    "invoice_date", "due_date", "tax_amount", "total",
 }
 
 
@@ -73,11 +77,15 @@ def validation_response(error: RequestValidationError) -> JSONResponse:
             message = "Use an integer within the allowed bounds."
         elif kind in {"too_short", "too_long", "list_type"}:
             message = "Provide between 1 and 100 line items."
-        elif field.endswith("quantity"):
+        elif field.endswith(("quantity", "quantity_received")):
             message = "Use a positive decimal string within the quantity bounds and at most 3 fractional digits."
         elif field.endswith("unit_price"):
             message = "Use a nonnegative decimal string within the price bounds and at most 4 fractional digits."
-        elif field == "order_date":
+        elif field == "tax_amount":
+            message = "Use a nonnegative decimal string within the monetary bounds and at most 2 fractional digits."
+        elif field == "due_date":
+            message = "Use a valid YYYY-MM-DD calendar date on or after invoice_date, or null."
+        elif field in {"order_date", "received_date", "invoice_date"}:
             message = "Use a valid YYYY-MM-DD calendar date."
         elif field == "currency":
             message = "Use EUR."
@@ -89,6 +97,11 @@ def validation_response(error: RequestValidationError) -> JSONResponse:
 
 class BusinessRoute(APIRoute):
     """Sanitize business errors without changing foundation endpoint handlers."""
+
+    def __init__(self, *args, **kwargs):
+        # Explicit 422 replaces FastAPI's default detail schema in OpenAPI.
+        kwargs["responses"] = {**(kwargs.get("responses") or {}), **BUSINESS_ERROR_RESPONSES}
+        super().__init__(*args, **kwargs)
 
     def get_route_handler(self) -> Callable:
         original_handler = super().get_route_handler()

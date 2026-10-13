@@ -3,10 +3,10 @@
 AI-assisted supplier invoice extraction, matching, review, and approval.
 
 ## Status
-The local development status page, PostgreSQL schema, and supplier/purchase-order
-APIs are available. Step 3.3 adds explicit workspace initialization and exact
-purchase-order totals. Business forms, delivery/invoice APIs, and full demo data
-seeding remain later work.
+The local development status page, PostgreSQL schema, and supplier, purchase-order,
+delivery-record, and draft-invoice APIs are available. Step 3.4 adds deliveries,
+optional manual invoice mappings, exact invoice totals, and documented business
+error envelopes. Business frontend pages and full demo data seeding remain later work.
 
 ## First release
 English invoices in EUR; one purchase order per invoice; single-page
@@ -78,7 +78,7 @@ Vite development server; the production build needs its own API routing.
 ## Automated checks (Step 2C)
 
 `.github/workflows/ci.yml` runs for pull requests targeting `main` and pushes
-to `main` or `feat/local-foundation`. Both jobs use GitHub-hosted Ubuntu 24.04
+to `main`, `feat/local-foundation`, or `feat/manual-invoice-workflow`. Both jobs use GitHub-hosted Ubuntu 24.04
 runners and `contents: read` permissions. Checkout does not retain credentials.
 The official checkout and setup-node actions are pinned to verified release
 commits ([checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1)
@@ -156,7 +156,7 @@ must be trimmed and nonblank. Business dates are valid calendar dates in years
 PostgreSQL itself coerces input to a numeric column's scale. Step 3.3's request
 schemas additionally reject excess input scale and enforce line-count limits;
 its purchase-order service calculates and rounds line totals and subtotal.
-Invoice-specific schemas and calculations remain deferred.
+Step 3.4 adds invoice schemas and calculations using the same decimal rules.
 
 ORM parent relationships write their designated IDs while keeping workspace IDs
 explicit. Workspace collections and order-line lookup relationships are read-only
@@ -237,10 +237,10 @@ performed and checks still awaiting user verification or online CI.
 
 ## Demo workspace and manual record APIs (Step 3.3)
 
-This checkpoint provides only create/list/retrieve supplier and purchase-order
-APIs. It does not add business frontend pages, deliveries, invoices, editing,
-deletion, authentication, uploads, extraction, matching, approval, or deployment.
-The existing status page and health/readiness bodies are preserved.
+Step 3.3 introduced create/list/retrieve supplier and purchase-order APIs.
+[Step 3.4 below](#delivery-record-and-draft-invoice-apis-step-34) extends these
+with delivery records and draft invoices. The existing status page and
+health/readiness bodies are preserved.
 
 ### Explicit workspace initialization
 
@@ -361,3 +361,147 @@ CI retains its existing triggers and adds pushes to `feat/manual-invoice-workflo
 Frontend checks, migration guards, bounded waits, failure logs, read-only GitHub
 permissions, and disposable cleanup remain. No applied migration was rewritten,
 and no model/schema issue required a new migration for this checkpoint.
+
+## Delivery-record and draft-invoice APIs (Step 3.4)
+
+Both resources provide POST, GET list, and GET `/{id}` endpoints:
+`/delivery-receipts` and `/invoices`. Creates return HTTP 201 with a relative
+`Location` header and saved nested lines; retrieve returns the same full record.
+Lists return header-only `items`, `limit`, `offset`, and workspace-scoped `total`.
+The existing pagination limits and stable ordering apply. Delivery lists filter
+by `purchase_order_id`; invoices filter by `supplier_id`, `purchase_order_id`,
+or both together. A valid absent or other-workspace filter returns an empty list.
+
+A receipt requires an existing order and 1-100 lines from that order, with one
+entry per order line in each receipt. The server assigns line numbers and copies
+the internal order ID. Multiple receipts and positive overdelivery quantities
+are allowed; cumulative quantities are not compared in this checkpoint.
+
+An invoice requires a supplier and may select one of that supplier's orders.
+Each optional manual line mapping must refer to that selected order. Lines may
+remain unmapped even with an order; an invoice without an order cannot have
+mapped lines. Multiple invoice lines may map to the same order line. All invoices
+are assigned `draft` by the server; client-supplied status is rejected, including
+`draft`. There are no editing or deletion endpoints.
+
+Invoice quantities/prices use the existing strict decimal-string rules. Required
+`tax_amount` is an explicitly entered nonnegative amount, with at most two decimal
+places and maximum `9999999999999999.99`. It is not a percentage or an inferred
+tax amount. Each line is rounded HALF_UP to cents; rounded lines are summed for
+`subtotal`, then tax is added for `total`. Responses format quantities to three,
+prices to four, and monetary amounts to two decimal places. All calculated
+overflows return 422 before insertion; supplied totals and internal line order
+IDs are rejected. Optional `due_date` must be on or after `invoice_date`.
+
+Missing or other-workspace references return 404. An existing line from another
+order, an order from the wrong supplier, or an incompatible mapping returns 422.
+Receipt numbers are unique per workspace; invoice numbers are unique per supplier
+within the workspace. Database constraints handle duplicates, including races,
+with 409 and rollback. Each header and all lines save in one transaction before
+success is returned. Sanitized 422/404/409/503/500 responses use the existing
+`error.code`, `error.message`, `error.details` envelope. Swagger now documents
+that envelope for **all** business routes. Health/readiness contracts are unchanged.
+
+### Synthetic delivery and invoice verification
+
+Rebuild the API from **Windows host PowerShell** in the project directory:
+
+```powershell
+docker compose up --build -d api
+```
+
+The development database must already be migrated and the demo workspace
+initialized as described above. No new migration or seeding is required for
+Step 3.4 if Step 3.3 was verified. Open `http://127.0.0.1:8000/docs` to inspect
+the new endpoints and business error schemas.
+
+Use `$manualSupplier` and the full `$manualOrder` from the earlier fictional
+supplier/order example. If those records already exist and the PowerShell session
+was closed, retrieve them instead of posting duplicate creates (these commands
+search the first 100 records; select another page if necessary):
+
+```powershell
+$manualApiBase = 'http://127.0.0.1:8000'
+$manualSupplier = (Invoke-RestMethod -Uri "$manualApiBase/suppliers?limit=100").items | Where-Object supplier_code -EQ 'DEMO-OFFICE-001' | Select-Object -First 1
+if ($null -eq $manualSupplier) { throw 'Create the fictional supplier using the earlier example first.' }
+$manualOrderSummary = (Invoke-RestMethod -Uri "$manualApiBase/purchase-orders?supplier_id=$($manualSupplier.id)&limit=100").items | Where-Object po_number -EQ 'PO-DEMO-001' | Select-Object -First 1
+if ($null -eq $manualOrderSummary) { throw 'Create the fictional order using the earlier example first.' }
+$manualOrder = Invoke-RestMethod -Uri "$manualApiBase/purchase-orders/$($manualOrderSummary.id)"
+```
+
+Create a receipt for 8 of the 10 keyboards and an invoice charging for all 10.
+These **Windows host PowerShell commands** write only fictional business records
+when you explicitly run them:
+
+```powershell
+$manualReceiptBody = @{
+    purchase_order_id = $manualOrder.id
+    receipt_number = 'DR-DEMO-001'
+    received_date = '2026-10-14'
+    lines = @(
+        @{
+            purchase_order_line_id = $manualOrder.lines[0].id
+            quantity_received = '8.000'
+        }
+    )
+} | ConvertTo-Json -Depth 4
+$manualReceipt = Invoke-RestMethod -Method Post -Uri "$manualApiBase/delivery-receipts" -ContentType 'application/json' -Body $manualReceiptBody
+
+$manualInvoiceBody = @{
+    supplier_id = $manualSupplier.id
+    purchase_order_id = $manualOrder.id
+    invoice_number = 'INV-DEMO-001'
+    invoice_date = '2026-10-15'
+    due_date = '2026-11-15'
+    currency = 'EUR'
+    tax_amount = '0.00'
+    lines = @(
+        @{
+            description = 'Keyboard'
+            quantity = '10.000'
+            unit_price = '25.0000'
+            purchase_order_line_id = $manualOrder.lines[0].id
+        }
+    )
+} | ConvertTo-Json -Depth 4
+$manualInvoice = Invoke-RestMethod -Method Post -Uri "$manualApiBase/invoices" -ContentType 'application/json' -Body $manualInvoiceBody
+
+Invoke-RestMethod -Uri "$manualApiBase/delivery-receipts/$($manualReceipt.id)" | ConvertTo-Json -Depth 6
+Invoke-RestMethod -Uri "$manualApiBase/invoices/$($manualInvoice.id)" | ConvertTo-Json -Depth 6
+Invoke-RestMethod -Uri "$manualApiBase/delivery-receipts?purchase_order_id=$($manualOrder.id)&limit=20&offset=0" | ConvertTo-Json -Depth 4
+Invoke-RestMethod -Uri "$manualApiBase/invoices?supplier_id=$($manualSupplier.id)&purchase_order_id=$($manualOrder.id)&limit=20&offset=0" | ConvertTo-Json -Depth 4
+```
+
+Use the **header** `$manualOrder.id` for order URLs and header references; use
+`$manualOrder.lines[0].id` only for line mappings. Expect received quantity
+`"8.000"`, invoice quantity `"10.000"`, status `"draft"`, subtotal `"250.00"`,
+tax `"0.00"`, and total `"250.00"`. The linked records show the 10/8/10 workflow;
+automatic discrepancy detection remains deferred. For an invoice without an order,
+omit or null both the header order ID and each line mapping. For an unmapped line
+on a selected order, omit or null only `purchase_order_line_id`.
+
+Repeating these creates returns 409. Retrieve existing records, or use new fictional
+document numbers for another run. Authentication, uploads, AI, automatic matching,
+approval, notifications, exports, business frontend pages, and full demo seeding
+remain later work.
+
+### Isolated Step 3.4 checks
+
+From **Windows host PowerShell**, run:
+
+```powershell
+.\scripts\check-backend.ps1
+```
+
+The existing checker and CI run all new PostgreSQL API tests automatically with
+their explicit opt-in and disposable-database guards. The fixture uses a fresh
+session per request inside an outer test transaction, so API commits, synthetic
+rows, and failure-injection triggers are removed after each test. The suite checks
+the complete workflow, optional mappings, workspace isolation, pagination,
+decimal/tax/date rules, duplicate keys, and failure recovery. It injects actual
+PostgreSQL second-line failures and pre-commit failures to prove atomicity.
+Separate tests verify the published OpenAPI error contracts for every business
+operation while preserving foundation contracts. Normal pytest still skips all
+PostgreSQL tests unless the guarded disposable environment opts in. No host Python
+installation or new dependency is needed. See [progress](docs/progress.md) for
+completed checks and pending user/online CI verification.

@@ -40,3 +40,18 @@ def sum_line_totals(line_totals: Iterable[Decimal]) -> Decimal:
             if total > MAX_AMOUNT:
                 raise MoneyError("Calculated subtotal exceeds the supported monetary range.")
         return total.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def calculate_invoice_total(subtotal: Decimal, tax_amount: Decimal) -> Decimal:
+    """Add explicitly entered cent tax; no tax rate or tax-rule inference."""
+    with localcontext() as context:
+        context.prec = 38
+        for amount in (subtotal, tax_amount):
+            if not isinstance(amount, Decimal) or not amount.is_finite() or not 0 <= amount <= MAX_AMOUNT:
+                raise MoneyError("Invalid invoice subtotal or tax amount.")
+            if amount != amount.quantize(CENT, rounding=ROUND_HALF_UP):
+                raise MoneyError("Invoice subtotal and tax amount must be in cents.")
+        total = subtotal + tax_amount
+        if total > MAX_AMOUNT:
+            raise MoneyError("Calculated invoice total exceeds the supported monetary range.")
+        return total.quantize(CENT, rounding=ROUND_HALF_UP)

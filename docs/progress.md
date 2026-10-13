@@ -1,7 +1,7 @@
 # Progress
 
 Current milestone: 3 - Manual business records
-Current task: Step 3.4 - delivery-record and draft-invoice APIs (not started)
+Current task: Step 3.5A - website navigation, suppliers, and purchase orders (not started)
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -23,6 +23,7 @@ Completed:
 - Reviewed the Step 3.1 manual-workflow blueprint as the implementation contract
 - Completed Step 3.2 database/session foundation and disposable PostgreSQL schema verification
 - Completed Step 3.3 explicit workspace initialization, supplier/purchase-order APIs, and isolated API verification
+- Completed Step 3.4 delivery-record and draft-invoice APIs, business OpenAPI error contracts, and isolated API verification
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -213,9 +214,50 @@ Step 3.3 user verification:
 - A line-item ID initially returned 404 when used as an order ID; using the header ID resolved the request.
 - Online GitHub CI verification remains pending.
 
+Step 3.4 implementation and decisions:
+- Added create/list/retrieve delivery-receipt and draft-invoice schemas and six endpoints using the existing fixed-workspace/session dependencies. Clients cannot select a workspace or supply server-owned fields, status, totals, or internal line order IDs.
+- Receipts require an existing scoped purchase order and its lines, reject duplicate order-line entries within one receipt, assign ordered line numbers, and copy the internal order ID on the server. Multiple receipts and positive overdelivery are accepted; cumulative quantity comparisons remain deferred.
+- Invoices require a scoped supplier and optionally one order from that supplier. Optional manual mappings must refer to the selected order; no order means no mapped lines. Unmapped lines and repeated invoice mappings are allowed. Every invoice receives server-assigned draft status.
+- Reused strict decimal-string validation and per-line HALF_UP rounding. Factored the existing purchase-order line calculation into a shared helper without changing its behavior; added explicit cent-scale tax validation and invoice subtotal-plus-tax addition using local Decimal precision 38. Line, subtotal, and final total overflow are rejected before insertion.
+- Extended the existing atomic save/error handling for scoped delivery/invoice uniqueness constraints. Each document commits once before success; failures roll back all rows. Scoped missing references are 404; incompatible in-workspace relationships and invalid input are 422; errors remain sanitized.
+- Added a common documented business error model to BusinessRoute, so all 12 business operations advertise error.code/error.message/error.details for 422/404/409/503/500. This corrects the Swagger documentation mismatch; the existing runtime validation was already using that envelope. Health/readiness handlers and documentation contracts are preserved.
+- Added guarded PostgreSQL workflow, persistence, relationship, filtering, validation, tax, overflow, rollback/recovery, and commit-isolation tests. Added OpenAPI contract tests and invoice calculation unit tests. Updated the old deferred-route assertion to cover approval/export endpoints, since delivery/invoice routes are now implemented.
+- Updated README with synthetic delivery/invoice PowerShell examples, retrieval of the previously created supplier/order, optional mapping rules, invoice totals, and Swagger verification.
+- No schema issue was found. Models, the applied initial migration, Alembic configuration, database sessions, dependencies/lockfiles, Docker/Compose files, workspace initialization, and frontend are unchanged. The existing checker and CI already collect all new tests with PostgreSQL opt-in; their guards, outage/recovery checks, frontend job, triggers, permissions, and cleanup needed no changes.
+
+Step 3.4 checks actually performed:
+- First disposable checker run applied migrations and ran 466 tests: 465 passed and one new test failed because its helper supplied supplier_id twice. Corrected that helper; no runtime/API defect was identified by the failure. Its disposable resources were cleaned up.
+- Final `.\scripts\check-backend.ps1` passed end to end with exit code 0: Compose validation, locked image build using Python 3.12 inside Docker, bounded startup, actual HTTP health/readiness, disposable database guard, migration upgrade, and revision `0001_manual_records (head)`.
+- Final opted-in pytest passed: 466 tests, no skips (351 PostgreSQL/API/workspace cases and 115 other checks). All retained foundation, schema, supplier/order, and workspace tests passed alongside the new delivery/invoice and OpenAPI cases.
+- The stored 10 ordered / 8 delivered / 10 invoiced workflow passed, including real nested-row persistence, linked record retrieval, server-generated IDs/timestamps, fixed decimal scales, ordered lines, and header-only lists.
+- Missing/cross-workspace references, wrong suppliers/orders/lines, duplicate receipt entries, optional order/mapping combinations, duplicate scoped identifiers, pagination/filtering, malformed UUIDs/JSON, decimal strings/bounds, dates/currency, client-supplied status/totals/internal fields, HALF_UP rounding, tax addition, and all three invoice overflow levels passed.
+- For each new document type, an actual PostgreSQL trigger failure on the second line returned sanitized 500 and left no header or lines. Injected failure after flushed rows but before commit returned sanitized 503 without Location/success and left no partial document. A subsequent valid create succeeded using the same document identifier. Per-test rollback removed committed rows and trigger DDL.
+- The checker executed explicit workspace initialization twice successfully after pytest, then retained actual HTTP outage/recovery checks passed: health 200/readiness 200 initially; health 200/readiness 503 while PostgreSQL/Redis stopped; readiness 200 after restart.
+- Ordinary pytest in the final Linux API image with Docker networking disabled passed: 115 tests and 351 PostgreSQL skips, each with the explicit opt-in reason. It required no database connection or host Python installation.
+- All 14 README PowerShell blocks parsed successfully; PowerShell checker syntax passed. These documentation examples were syntax-checked, not executed against the development API.
+- Git comparison confirmed the instructions/scope/blueprint, database/session/model/migration files, dependencies/lockfile, workspace initialization/dependency, PostgreSQL fixtures, Docker/Compose files, checker/CI, and complete frontend are unchanged. `git diff --check` and explicit new-file whitespace checks passed.
+- Verified both disposable projects removed their containers, networks, volumes, and generated temporary settings files. Before/after Docker status showed the development API still running and its PostgreSQL/Redis healthy. No development database operations were performed.
+
+Step 3.4 remaining verification and limits:
+- From Windows PowerShell, the user can repeat isolated checks with `.\scripts\check-backend.ps1`, then rebuild the development API with `docker compose up --build -d api` and inspect `http://127.0.0.1:8000/docs`. The README has exact synthetic delivery/invoice commands. Development migration/workspace initialization was already reported complete in the Step 3.3 user verification; Step 3.4 requires no new migration or seed command.
+- Manual development requests and browser/Swagger inspection were not performed by Codex, to preserve development database contents. Automated TestClient requests used only the approved disposable PostgreSQL database.
+- Online GitHub CI remains pending on a separately authorized submitted revision. No commit or push was performed. Frontend lint/tests/build were not rerun because frontend files are unchanged; CI retains those checks.
+- The existing Starlette TestClient/httpx deprecation warning remains, unsuppressed; it did not fail either final test run. No new dependency was necessary.
+- The actual `.env` was not read, printed, created, or modified; `Microsoft/` remains untouched. No development data changes, migration rewrite, frontend work, or later milestone implementation occurred.
+
+Step 3.4 user verification:
+- Disposable backend checker passed: 466 tests, exit code 0.
+- Dependency outage, recovery, and disposable cleanup passed.
+- Delivery creation returned HTTP 201.
+- Delivery retrieval returned HTTP 200 with quantity_received "8.000".
+- Invoice creation returned HTTP 201.
+- Invoice retrieval returned HTTP 200 with draft status and total "250.00".
+- Delivery and invoice records reference the intended purchase order and line.
+- Online GitHub CI verification remains pending.
+
 Next task:
-- Stop after Step 3.3 and await the next requested checkpoint.
-- Record any user-run development API verification or future GitHub CI results separately from the local checks above.
-- Keep delivery/invoice APIs, full demo data seeding, frontend work, authentication, uploads, AI, matching, approval, exports, and cloud deployment deferred.
+- Stop after Step 3.4 and await the next requested checkpoint.
+- Record user-run development delivery/invoice verification and future online CI results separately from completed local checks.
+- Keep full demo seeding, business frontend pages, editing/deletion, authentication, uploads, AI, automatic matching, approval, notifications, exports, and cloud infrastructure deferred.
 
 Blockers: None recorded.

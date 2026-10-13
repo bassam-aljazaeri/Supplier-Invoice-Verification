@@ -349,6 +349,6 @@ def test_each_test_starts_without_previous_api_commits(schema_session):
         assert schema_session.scalar(select(func.count()).select_from(model)) == 0
 
 
-@pytest.mark.parametrize("path", ["/invoices", "/delivery-receipts"])
+@pytest.mark.parametrize("path", ["/approvals", "/exports"])
 def test_deferred_business_routes_are_absent(demo_api, path):
     assert demo_api.get(path).status_code == 404
