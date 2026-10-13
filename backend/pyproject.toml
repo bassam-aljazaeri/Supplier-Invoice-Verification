@@ -4,8 +4,10 @@ version = "0.1.0"
 description = "Local API foundation for Supplier-Invoice-Verification"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.16,<2.0",
     "fastapi>=0.115,<1.0",
     "psycopg[binary]>=3.2,<4.0",
+    "pydantic>=2.0,<3.0",
     "redis>=5.2,<7.0",
     "sqlalchemy>=2.0,<3.0",
     "uvicorn[standard]>=0.34,<1.0",
@@ -20,3 +22,5 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["postgres: requires explicit opt-in and an approved disposable PostgreSQL database"]
+filterwarnings = ["error::sqlalchemy.exc.SAWarning"]

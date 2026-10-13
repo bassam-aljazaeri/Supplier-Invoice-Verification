@@ -3,28 +3,11 @@ from contextlib import asynccontextmanager
 
 import redis
 from fastapi import FastAPI, Response
-from sqlalchemy import URL, create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-
-def database_url() -> URL:
-    """Build a PostgreSQL URL safely from separate connection settings."""
-    return URL.create(
-        drivername="postgresql+psycopg",
-        username=os.getenv("POSTGRES_USER", "supplier_invoice"),
-        password=os.getenv("POSTGRES_PASSWORD", "local-only-placeholder"),
-        host=os.getenv("POSTGRES_HOST", "db"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-        database=os.getenv("POSTGRES_DB", "supplier_invoice"),
-    )
-
-
-engine = create_engine(
-    database_url(),
-    connect_args={"connect_timeout": 2},
-    pool_timeout=3,
-    pool_pre_ping=True,
-)
+from app.db import engine
+from app.api import delivery_receipts, invoices, purchase_orders, suppliers
 
 
 def create_redis_client() -> redis.Redis:
@@ -50,6 +33,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Supplier-Invoice-Verification API", lifespan=lifespan)
+app.include_router(suppliers.router)
+app.include_router(purchase_orders.router)
+app.include_router(delivery_receipts.router)
+app.include_router(invoices.router)
 
 
 @app.get("/health")
