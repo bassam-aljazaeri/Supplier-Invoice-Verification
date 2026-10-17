@@ -54,11 +54,14 @@ try {
     # empty database before their guarded downgrade/upgrade round trip.
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', '-m', 'app.seed_workspace')
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', '-m', 'app.seed_workspace')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_auth', 'bootstrap'))
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_demo', 'capture'))
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_auth', 'verify'))
     # Restart existing containers; retain the API snapshot and PostgreSQL volume.
     Invoke-BackendCheckCompose -CheckArguments @('restart', '--timeout', '10', 'api', 'db')
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', 'scripts/check_endpoints.py', '--timeout', '60')
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_demo', 'verify'))
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_auth', 'verify'))
     Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '10', 'db', 'redis')
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', 'scripts/check_endpoints.py', '--expect-unavailable', '--timeout', '60')
     Invoke-BackendCheckCompose -CheckArguments @('start', 'db', 'redis')

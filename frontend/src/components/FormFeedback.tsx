@@ -21,11 +21,11 @@ export function TextField({ id, field, label, value, onChange, details, hint, ty
 export function FormFeedback({ error, listHref }: { error: ApiFailure | null; listHref: string }) {
   if (!error) return null
   return <div className="error-summary" role="alert" tabIndex={-1}>
-    <h3>{error.kind === 'validation' ? 'Check the form' : error.kind === 'conflict' ? 'Identifier already exists' : error.kind === 'missing' ? 'Reference not found' : 'Save could not be confirmed'}</h3>
+    <h3>{error.kind === 'unauthorized' ? 'Sign in again' : error.kind === 'forbidden' ? 'Permission denied' : error.kind === 'validation' ? 'Check the form' : error.kind === 'conflict' ? 'Change conflicts with saved data' : error.kind === 'missing' ? 'Reference not found' : 'Save could not be confirmed'}</h3>
     <p>{error.message}</p>
     {error.details.length > 0 && <ul>{error.details.map((detail, index) => <li key={`${detail.field}-${index}`}>{detail.message}</li>)}</ul>}
     {error.uncertainWrite && <p>The record may already have been saved. Your input is retained. Check the list for its code or number before trying Save again.</p>}
-    {(error.uncertainWrite || error.kind === 'conflict') && <a href={listHref} target="_blank" rel="noopener noreferrer">Check saved records (opens a new tab)</a>}
+    {(error.uncertainWrite || error.kind === 'conflict') && <a href={listHref}>Check saved records before retrying</a>}
     {(error.kind === 'unavailable' || error.kind === 'server' || error.kind === 'network' || error.kind === 'timeout') && <p><a href="#/status">Check service status</a></p>}
   </div>
 }

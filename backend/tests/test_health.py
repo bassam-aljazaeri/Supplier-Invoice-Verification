@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app import main
+from tests.auth_helpers import SigningKeys
 
 
 class SuccessfulConnection:
@@ -37,7 +38,7 @@ def client(monkeypatch, *, database=None, redis_client=None):
         "create_redis_client",
         lambda: redis_client or SuccessfulRedis(),
     )
-    return TestClient(main.app)
+    return TestClient(main.create_app(verifier=SigningKeys().verifier()))
 
 
 def test_health_is_independent_of_dependencies(monkeypatch):

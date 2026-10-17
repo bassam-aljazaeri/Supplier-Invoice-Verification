@@ -65,8 +65,9 @@ def invoice_payload(supplier_id, number="INV-001", **overrides):
 
 
 @pytest.fixture
-def demo_api(api_client, schema_session):
+def demo_api(api_client, schema_session, grant_demo_access):
     initialize_workspace(schema_session)
+    grant_demo_access()
     return api_client
 
 
@@ -399,9 +400,9 @@ def test_malformed_uuid_and_missing_detail(demo_api, resource):
 def test_missing_workspace_does_not_initialize_on_new_routes(api_client, schema_session):
     po = {"id": str(uuid4()), "lines": [{"id": str(uuid4())}]}
     for resource, payload in [("delivery-receipts", receipt_payload(po)), ("invoices", invoice_payload(str(uuid4())))]:
-        assert_error(api_client.post(f"/{resource}", json=payload), 503, "service_unavailable")
-        assert_error(api_client.get(f"/{resource}"), 503, "service_unavailable")
-        assert_error(api_client.get(f"/{resource}/{uuid4()}"), 503, "service_unavailable")
+        assert_error(api_client.post(f"/{resource}", json=payload), 403, "forbidden")
+        assert_error(api_client.get(f"/{resource}"), 403, "forbidden")
+        assert_error(api_client.get(f"/{resource}/{uuid4()}"), 403, "forbidden")
     assert schema_session.scalar(select(func.count()).select_from(Workspace)) == 0
     assert api_client.get("/health").json() == {"status": "ok"}
 

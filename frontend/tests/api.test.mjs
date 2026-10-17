@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { afterEach, beforeEach, test } from 'node:test'
+import { configurePrivateRequests } from '../src/api.ts'
 import { createPurchaseOrder, createSupplier, getPurchaseOrder, getPurchaseOrders, getSupplier, getSuppliers } from '../src/api.ts'
 
 // Fictional response IDs only; these tests never contact a database.
 const supplierId = '10000000-0000-4000-8000-000000000001'
 const orderId = '20000000-0000-4000-8000-000000000001'
 const workspaceId = '00000000-0000-4000-8000-000000000001'
+beforeEach(() => configurePrivateRequests({ workspaceId, accessToken: async () => 'synthetic-access-token', onFailure: () => {} }))
+afterEach(() => configurePrivateRequests(null))
 const savedSupplier = { id: supplierId, workspace_id: workspaceId, created_at: '2026-10-13T09:00:00Z', supplier_code: 'SYNTHETIC', name: 'Fictional supplier', notes: null }
 const inputOrder = { supplier_id: supplierId, po_number: 'PO-SYNTHETIC', order_date: '2026-10-13', currency: 'EUR', notes: null, lines: [{ description: 'Keyboard', quantity: '10.000', unit_price: '25.0000' }] }
 const savedOrder = {
@@ -33,6 +36,8 @@ test('supplier requests use the proxy and only accepted fields', async (t) => {
     assert.equal(options.cache, 'no-store')
     assert.equal(options.headers['Content-Type'], 'application/json')
     assert.equal(options.headers.Accept, 'application/json')
+    assert.equal(options.headers.Authorization, 'Bearer synthetic-access-token')
+    assert.equal(options.headers['X-Workspace-ID'], workspaceId)
     assert.deepEqual(JSON.parse(options.body), { supplier_code: 'SYNTHETIC', name: 'Fictional supplier', notes: null })
     return Response.json(savedSupplier, { status: 201 })
   })

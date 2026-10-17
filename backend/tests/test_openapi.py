@@ -7,13 +7,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
 from app.api.errors import BusinessError, validation_response
-from app.main import app
+from app.main import create_app
 from app.schemas.errors import BusinessErrorResponse
+from tests.auth_helpers import SigningKeys
 
 
 @pytest.fixture(scope="module")
 def openapi():
-    with TestClient(app) as client:
+    with TestClient(create_app(verifier=SigningKeys().verifier())) as client:
         response = client.get("/openapi.json")
         assert response.status_code == 200
         return response.json()
@@ -24,10 +25,10 @@ def openapi():
 def test_all_business_operations_document_actual_error_envelope(openapi, resource, suffix, method, success):
     responses = openapi["paths"][f"/{resource}{suffix}"][method]["responses"]
     assert success in responses
-    for status in ("422", "404", "409", "503", "500"):
+    for status in ("401", "403", "422", "404", "409", "503", "500"):
         assert responses[status]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/BusinessErrorResponse"}
         example = responses[status]["content"]["application/json"]["example"]
-        assert example["error"]["code"] == {"422": "validation_error", "404": "not_found", "409": "conflict", "503": "service_unavailable", "500": "internal_error"}[status]
+        assert example["error"]["code"] == {"401": "unauthorized", "403": "forbidden", "422": "validation_error", "404": "not_found", "409": "conflict", "503": "service_unavailable", "500": "internal_error"}[status]
         assert BusinessErrorResponse.model_validate(example).model_dump() == example
     assert "HTTPValidationError" not in json.dumps(responses)
 

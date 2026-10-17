@@ -8,8 +8,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-def read_response(url: str, timeout: float) -> tuple[int, object]:
-    request = Request(url, headers={"Accept": "application/json"})
+def read_response(url: str, timeout: float, *, headers: dict[str, str] | None = None) -> tuple[int, object]:
+    request = Request(url, headers={"Accept": "application/json", **(headers or {})})
     try:
         response = urlopen(request, timeout=timeout)
     except HTTPError as error:

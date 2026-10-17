@@ -16,6 +16,7 @@ from app.schemas.invoice import InvoiceRead
 from app.schemas.purchase_order import PurchaseOrderRead
 from app.schemas.supplier import SupplierRead
 from scripts.check_endpoints import read_response
+from scripts.check_auth import authentication_headers
 from scripts.check_schema import TestTargetError, approved_test_url, require_test_marker, verify_revision
 
 WORKSPACE = "00000000-0000-4000-8000-000000000001"
@@ -26,7 +27,7 @@ RECEIPT = "30000000-0000-4000-8000-000000000001"
 RECEIPT_LINE = "31000000-0000-4000-8000-000000000001"
 INVOICE = "40000000-0000-4000-8000-000000000001"
 INVOICE_LINE = "41000000-0000-4000-8000-000000000001"
-ERROR_CODES = {"422": "validation_error", "404": "not_found", "409": "conflict", "503": "service_unavailable", "500": "internal_error"}
+ERROR_CODES = {"401": "unauthorized", "403": "forbidden", "422": "validation_error", "404": "not_found", "409": "conflict", "503": "service_unavailable", "500": "internal_error"}
 
 
 class DemoCheckError(RuntimeError):
@@ -65,7 +66,8 @@ def read_demo(base_url: str = "http://127.0.0.1:8000", *, timeout: float = 60) -
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise DemoCheckError("Demo HTTP deadline reached.")
-        status, body = read_response(base_url.rstrip("/") + path, remaining)
+        headers = None if path == "/openapi.json" else authentication_headers()
+        status, body = read_response(base_url.rstrip("/") + path, remaining, headers=headers)
         if status != 200 or not isinstance(body, dict):
             raise DemoCheckError("A demo API read did not return its expected HTTP 200 object.")
         return body
