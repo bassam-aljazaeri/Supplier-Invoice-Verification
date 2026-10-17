@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, feat/local-foundation, feat/manual-invoice-workflow]
+    branches: [main, feat/local-foundation, feat/manual-invoice-workflow, feat/auth-workspaces]
 
 permissions:
   contents: read
@@ -91,9 +91,15 @@ jobs:
         run: |
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T api python -m app.seed_workspace
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T api python -m app.seed_workspace
+      - name: Register and explicitly grant the synthetic HTTP caller
+        timeout-minutes: 2
+        run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_auth bootstrap
       - name: Seed demo twice and capture live API records
         timeout-minutes: 3
         run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_demo capture
+      - name: Verify live token and workspace authorization
+        timeout-minutes: 2
+        run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_auth verify
       - name: Restart API and PostgreSQL with volumes retained
         timeout-minutes: 2
         run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" restart --timeout 10 api db
@@ -102,6 +108,7 @@ jobs:
         run: |
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T api python scripts/check_endpoints.py --timeout 60
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_demo verify
+          docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_auth verify
       - name: Verify health stays available when dependencies stop
         timeout-minutes: 2
         run: |

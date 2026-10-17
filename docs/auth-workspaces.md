@@ -10,9 +10,20 @@ Step 4.3 update: the separately requested persistence checkpoint implements the
 two tables, additive migration, internal transaction/locking services, and the
 explicit `app.bootstrap_membership` operator command. The inspected baseline
 below is historical Step 4.1 evidence. Token verification, `/me`, protected
-routes, public membership APIs, and browser login remain future work. Current
-business requests still use the existing fixed demo workspace. Section 7 and
+routes, public membership APIs, and browser login remained future work at that
+checkpoint. Step 4.3 business requests still used the fixed demo workspace. Section 7 and
 the backend configuration below reflect the user's revised operator contract.
+
+Step 4.4 update: access-token verification, current identity/workspace APIs,
+administrator membership APIs, and authorization for all twelve business
+operations are implemented. They use the existing Step 4.3 schema and locking
+services; no new migration is needed. API startup now requires
+`COGNITO_REGION`, `COGNITO_USER_POOL_ID`, and `COGNITO_APP_CLIENT_ID`. Generated
+signatures and guarded PostgreSQL/HTTP checks verify the backend without AWS.
+The browser flow in section 8 remains Step 4.5 work; current business pages
+cannot yet supply credentials. Historical baseline statements below describe
+the Step 4.1 inspection, not the current protected backend. Actual checks are
+recorded in `docs/progress.md`.
 
 ## 1. Inspected baseline and scope decisions
 
@@ -78,7 +89,7 @@ changing a pool requires a separate reviewed identity migration.
 
 ### Verification boundary
 
-Use PyJWT with its `cryptography` support (`PyJWT[crypto]`, locked later).
+Use PyJWT with its `cryptography` support (`PyJWT[crypto]`, locked in Step 4.4).
 Every protected HTTP request must pass the same verifier before application
 identity lookup or workspace access:
 
@@ -166,9 +177,9 @@ database, change existing record IDs, or move records into a new workspace.
 
 Existing fictional and manually entered records stay in `local-demo`, UUID
 `00000000-0000-4000-8000-000000000001`. It initially has zero memberships after
-upgrade. Once authorization is implemented, it will be inaccessible until the
-operator explicitly grants access; Step 4.3 preserves current public demo API
-behavior while adding persistence. A
+upgrade. Authorization now makes it inaccessible until the operator explicitly
+grants access; Step 4.3 preserved public demo API behavior while adding
+persistence. A
 freshly created workspace also briefly has zero memberships inside its creation
 transaction; it cannot become visible without its first administrator commit.
 The last-administrator rule therefore applies to established membership sets,
@@ -428,10 +439,11 @@ the CLI transaction owner does. Other callers must own the same boundary.
 
 No startup, import, migration, or seed invokes bootstrap. There is no public
 bootstrap endpoint or email-based grant. Existing data stay in their current
-workspaces. In Step 4.3 these rows prepare future authorization; current API
-behavior is deliberately unchanged. Internal persistence services are trusted
-operations, not authorization checks: future routers must verify caller authority
-after taking the workspace lock. No deactivation tool or public API is added.
+workspaces. In Step 4.3 these rows prepared future authorization; that checkpoint
+deliberately preserved API behavior. Step 4.4 now enforces membership. Internal
+persistence services are trusted operations, not authorization checks: the route
+boundary verifies caller authority after taking the workspace lock. No user
+deactivation tool or public user-directory API is added.
 
 ## 8. Browser lifecycle, storage, and navigation
 
@@ -567,20 +579,19 @@ token/logout endpoints against the controlled Cognito domain before use.
 
 | Backend setting | Meaning and validation |
 | --- | --- |
-| `COGNITO_REGION` | Region of the intended user pool; required by the Step 4.3 bootstrap CLI, optional for current API startup. |
+| `COGNITO_REGION` | Region of the intended user pool; required by API startup and the bootstrap CLI. |
 | `COGNITO_USER_POOL_ID` | Matching region-prefixed user-pool ID; derives the original regional issuer as `https://cognito-idp.{region}.amazonaws.com/{pool_id}` (China uses `amazonaws.com.cn`). Never accept issuer input from a request or CLI override. |
-| `COGNITO_CLIENT_ID` | Future token-verification setting for exact access-token `client_id` equality; not needed or added by Step 4.3. |
+| `COGNITO_APP_CLIENT_ID` | Required API setting for exact access-token `client_id` equality. This Step 4.4 name replaces the earlier draft's `COGNITO_CLIENT_ID`; bootstrap alone still needs only region/pool. |
 | Existing `POSTGRES_*`, `REDIS_HOST`, `REDIS_PORT` | Retain database/session and readiness configuration; do not expose values in logs. No additional database or Redis auth-session store is proposed. |
 
 Derive JWKS URL; do not expose an arbitrary production `JWKS_URL` or key-file
 override. Fix RS256, 30-second leeway, cache/deadline bounds, and role rules in
-code. When protected routes are implemented, fail API startup clearly for
-missing/malformed identity configuration;
+code. API startup now fails clearly for missing/malformed identity configuration;
 do not start with unprotected business routes. Validate configuration without
 logging raw values. Migrations and seed CLIs remain separate from web startup
 and require no Cognito network call. The grant CLI additionally needs the trusted
-region/pool configuration. Step 4.3 validates it only when bootstrap is invoked,
-so existing API startup works without Cognito settings. Configuration derivation
+region/pool configuration. Step 4.3 validated it only when bootstrap was invoked;
+Step 4.4 also validates all three settings at API startup. Configuration derivation
 supports the original regional issuer profile, not updated/multi-region issuers.
 Live backend verification will use public signing keys, not
 AWS IAM credentials or a browser client secret.
@@ -593,7 +604,9 @@ signatures and resolves database permissions.
 
 ## 10. Isolated verification and disposable HTTP checks
 
-This is the later test plan; none of these runtime checks ran in Step 4.1.
+This was the later test plan; none of these runtime checks ran in Step 4.1.
+Backend coverage is implemented in Steps 4.3/4.4; the frontend/browser row remains
+future work. Consult progress for actual results and remaining limits.
 
 | Test area | Required evidence |
 | --- | --- |
@@ -609,8 +622,8 @@ This is the later test plan; none of these runtime checks ran in Step 4.1.
 
 Retain approved disposable project names, the actual PostgreSQL 17 database/user
 and per-project marker check, explicit `RUN_POSTGRES_TESTS=1`, no development
-fallback, and existing outer-transaction/savepoint cleanup. Current fixtures
-import the module-level app; plan an application factory so each test app can
+fallback, and existing outer-transaction/savepoint cleanup. Step 4.4 provides an
+application factory so each test app can
 receive immutable synthetic verifier settings and a controlled JWKS transport
 without importing a misconfigured production singleton. Inject **key sources and
 settings**, not an authenticated identity or successful decode result. Keep
@@ -621,7 +634,7 @@ with their own targeted cleanup.
 ### Preserve the live HTTP checker's value
 
 TestClient dependency overrides do not affect the running Uvicorn process.
-Plan `backend/tests/run_http_api.py` as a separate disposable-only entrypoint,
+Step 4.4 implements `backend/tests/run_http_api.py` as a separate disposable-only entrypoint,
 launched by `compose.ci.yaml` in place of the production command. It constructs
 the same application factory and real PyJWT verifier with an injected fictional
 Cognito-shaped issuer/client and controlled local JWKS transport. Use the same
@@ -665,36 +678,39 @@ Do not obtain Cognito tokens or provision a real pool in a workflow job.
 
 ## 11. Planned files and rollout order
 
-The paths below describe later work only; Step 4.1 creates none of them.
+Step 4.1 created none of these implementation files. Backend rows now reflect
+Steps 4.3/4.4; frontend rows remain planned for Step 4.5.
 
-| Planned new file(s) | Purpose |
+| Implementation file(s) | Purpose |
 | --- | --- |
-| `backend/app/auth/settings.py`, `jwt.py`, `__init__.py` | Validated production settings, immutable verified principal, RS256 verification and bounded trusted JWKS source. |
+| `backend/app/auth.py`, `cognito.py` | Validated production settings, immutable verified principal, RS256 verification and bounded trusted JWKS source. |
 | `backend/app/models/application_user.py`, `workspace_membership.py` | Two new identity/access tables. |
 | `backend/migrations/versions/0002_auth_workspaces.py` | Additive schema-only revision after the applied initial migration. |
 | `backend/app/services/identity.py`, `workspaces.py`, `memberships.py` | Caller registration, atomic workspace creation, membership queries, and locked role mutations. |
 | `backend/app/schemas/identity.py`, `workspace.py`, `membership.py` | Strict request/response contracts and role literals. |
 | `backend/app/api/me.py`, `workspaces.py`, `memberships.py` | Protected identity/workspace and administrator-only membership endpoints. |
 | `backend/app/bootstrap_membership.py`, `backend/app/cognito.py` | Implemented in Step 4.3: explicit local grant and trusted region/pool issuer derivation. |
-| `backend/tests/auth_helpers.py`, `test_auth.py`, `test_identity.py`, `test_authorization.py`, `test_memberships.py`, `test_bootstrap_membership.py`, `run_http_api.py` | Generated keys, signature/permission/atomicity/concurrency/operator checks, and separate HTTP-server harness; Step 4.3 implements the persistence/operator portion only. |
-| `backend/scripts/check_auth.py` | Guarded disposable key preparation, signed HTTP test credentials, and access-negative checks shared with the demo checker. |
+| `backend/tests/auth_helpers.py`, `test_auth.py`, `test_workspace_api.py`, `test_authorization.py`, `test_membership_persistence.py`, `test_bootstrap_membership.py`, `run_http_api.py` | Generated keys, signature/permission/atomicity/concurrency/operator checks, and separate HTTP-server harness. |
+| `backend/scripts/check_auth.py` | Guarded signed HTTP test credentials, explicit registration/bootstrap, and access-negative checks shared with the demo checker. Key preparation is in the test harness. |
 | `frontend/src/auth.ts`, `authContext.tsx`, `authTypes.ts` | Library configuration, callback/renewal/logout lifecycle, session-generation guards, and typed caller/workspace state. |
 | `frontend/src/components/WorkspaceSelector.tsx`, `pages/AccountPage.tsx`, `pages/WorkspaceNewPage.tsx`, `pages/MembershipsPage.tsx` | Own-ID display, workspace choice/creation, and administrator member management. |
 | `frontend/tests/auth.test.mjs`, `workspaces.test.mjs` | Auth/storage/lifecycle/request-scope and workspace/role UI helper checks using the existing Node runner. |
 
-Later modifications are expected in backend `main.py` (factory and production
-entrypoint), model imports, dependencies, all four business routers, error
+Implemented backend integration includes `main.py` (factory and production
+entrypoint), dependencies, shared route authorization/error handling,
 schemas/wrapper, fixture/schema/OpenAPI/business/seed/checker tests, and
-`check_demo.py`/HTTP request helper. Seeds keep their current no-grants semantics.
-Declare and lock PyJWT with cryptography in backend manifest/lockfile, and
-`oidc-client-ts` in frontend manifest/lockfile without unrelated upgrades.
+`check_demo.py`/HTTP request helper. All four existing business routers receive
+authorization through their shared route class and dependencies; their source
+and scoped business services need no changes. Seeds keep their no-grants semantics.
+PyJWT with cryptography is locked in the backend manifest/lockfile. Add
+`oidc-client-ts` to the frontend manifest/lockfile in Step 4.5 without unrelated upgrades.
 Frontend App/navigation/API/types/hooks need auth/workspace integration; retain
 the independent status module. Update README/demo setup instructions and public
-setting documentation later. Compose development configuration must pass the
+setting documentation for browser integration later. Compose now passes the
 required backend settings; only the CI override selects the disposable harness
-and its key artifact handling. Update both check orchestration paths and image
-packaging if needed. These are future integration changes, not this checkpoint's
-permission to edit infrastructure or local environment files.
+and its key artifact handling. Both check orchestration paths and image
+packaging are updated. These changes do not authorize reading or modifying
+actual local environment files.
 
 Implement and roll out in this dependency order without calling later features
 complete early:
@@ -735,8 +751,9 @@ complete early:
    and retry without deleting data. Do not restore an unauthenticated API over
    the upgraded database or downgrade away memberships as routine recovery.
 
-Step 4.1 ended with documentation. The later Step 4.3 request implements only
-persistence, its migration and internal services, region/pool configuration,
-the explicit operator command, and their isolated tests. Authentication,
-protected APIs, browser login, auth dependencies, and authenticated HTTP-checker
-changes above remain deferred. Step 4.3 does not claim another step is complete.
+Step 4.1 ended with documentation. Step 4.3 added persistence, its migration and
+internal services, region/pool configuration, the operator command, and tests.
+Step 4.4 adds backend authentication/authorization, protected APIs, locked token
+dependencies, and authenticated disposable checks. Browser login/integration
+remains Step 4.5 work. No milestone is claimed complete beyond the separately
+requested backend checkpoint.

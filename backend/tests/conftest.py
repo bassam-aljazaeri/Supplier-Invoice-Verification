@@ -9,6 +9,31 @@ from app.db import create_database_engine, get_session
 from scripts.check_schema import (
     TestTargetError, approved_test_url, migration_config, require_test_marker, verify_revision,
 )
+from tests.auth_helpers import BUSINESS_SUBJECT, SETTINGS, SigningKeys
+
+
+@pytest.fixture(scope="session")
+def signing_keys():
+    return SigningKeys()
+
+
+@pytest.fixture
+def auth_verifier(signing_keys):
+    return signing_keys.verifier()
+
+
+@pytest.fixture
+def grant_demo_access(schema_session):
+    def grant():
+        from app.services.identity import ensure_application_user
+        from app.services.memberships import ensure_membership
+        from app.workspace import DEMO_WORKSPACE_ID
+
+        user = ensure_application_user(schema_session, SETTINGS.issuer, BUSINESS_SUBJECT)
+        ensure_membership(schema_session, DEMO_WORKSPACE_ID, user.id, "administrator")
+        schema_session.commit()
+        return user
+    return grant
 
 
 @pytest.fixture(scope="session")
@@ -46,9 +71,12 @@ def schema_session(postgres_engine):
 
 
 @pytest.fixture
-def api_client(schema_session):
+def api_client(schema_session, auth_verifier, signing_keys):
     """Each real API request gets a session whose commits stay in the test transaction."""
-    from app.main import app
+    from app.main import create_app
+    from app.workspace import DEMO_WORKSPACE_ID
+
+    app = create_app(verifier=auth_verifier)
 
     connection = schema_session.connection()
 
@@ -66,6 +94,7 @@ def api_client(schema_session):
     app.dependency_overrides[get_session] = test_session
     try:
         with TestClient(app, raise_server_exceptions=False) as client:
+            client.headers.update({"Authorization": "Bearer " + signing_keys.token(), "X-Workspace-ID": str(DEMO_WORKSPACE_ID)})
             yield client
     finally:
         app.dependency_overrides.clear()

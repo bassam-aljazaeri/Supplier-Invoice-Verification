@@ -49,7 +49,7 @@ def invoice_input(supplier_id=DEMO_SUPPLIER_ID, order_id=DEMO_ORDER_ID, line_id=
     return InvoiceCreate.model_validate({"supplier_id": str(supplier_id), "purchase_order_id": str(order_id), "invoice_number": number, "invoice_date": "2026-10-15", "due_date": "2026-11-14", "currency": "EUR", "tax_amount": "0.00", "lines": [{"description": "Keyboard", "quantity": "10.000", "unit_price": "25.0000", "purchase_order_line_id": str(line_id)}]})
 
 
-def test_fresh_seed_links_exact_fixture_with_one_commit(schema_session, api_client):
+def test_fresh_seed_links_exact_fixture_with_one_commit(schema_session, api_client, grant_demo_access):
     commits = []
     event.listen(schema_session, "before_commit", lambda session: commits.append(snapshot(session)))
     initialize_demo(schema_session)
@@ -77,6 +77,7 @@ def test_fresh_seed_links_exact_fixture_with_one_commit(schema_session, api_clie
     assert invoice.subtotal == invoice.total == Decimal("250.00")
     assert invoice.tax_amount == Decimal("0.00") and invoice.status == "draft"
     assert invoice.due_date == date(2026, 11, 14)
+    grant_demo_access()
     for resource, record_id in [("suppliers", DEMO_SUPPLIER_ID), ("purchase-orders", DEMO_ORDER_ID), ("delivery-receipts", DEMO_RECEIPT_ID), ("invoices", DEMO_INVOICE_ID)]:
         result = api_client.get(f"/{resource}/{record_id}")
         assert result.status_code == 200

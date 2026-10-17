@@ -10,6 +10,11 @@ import pytest
 from scripts import check_demo as checker
 
 
+@pytest.fixture(autouse=True)
+def synthetic_headers(monkeypatch):
+    monkeypatch.setattr(checker, "authentication_headers", lambda: {"Authorization": "Bearer synthetic-unit-value", "X-Workspace-ID": checker.WORKSPACE})
+
+
 @pytest.fixture
 def demo_responses(monkeypatch):
     common = {"workspace_id": checker.WORKSPACE, "created_at": "2026-10-13T12:00:00Z"}
@@ -35,8 +40,10 @@ def demo_responses(monkeypatch):
     document = {"paths": paths}
     calls = []
 
-    def read_response(url, timeout):
+    def read_response(url, timeout, *, headers=None):
         parsed = urlsplit(url)
+        if parsed.path != "/openapi.json":
+            assert headers == {"Authorization": "Bearer synthetic-unit-value", "X-Workspace-ID": checker.WORKSPACE}
         calls.append((parsed.path, parsed.query, timeout))
         if parsed.path == "/openapi.json":
             return 200, copy.deepcopy(document)
@@ -95,8 +102,8 @@ def test_extra_lines_fail(demo_responses):
 def test_bad_list_count_fails(demo_responses, monkeypatch):
     original = checker.read_response
 
-    def read(url, timeout):
-        status, body = original(url, timeout)
+    def read(url, timeout, *, headers=None):
+        status, body = original(url, timeout, headers=headers)
         if "?" in url:
             body["total"] = 2
         return status, body
@@ -115,7 +122,7 @@ def test_incorrect_live_openapi_example_fails(demo_responses):
 
 @pytest.mark.parametrize("response", [(503, {"error": {"code": "service_unavailable"}}), (200, [])])
 def test_non_success_or_non_object_fails(monkeypatch, response):
-    monkeypatch.setattr(checker, "read_response", lambda *_: response)
+    monkeypatch.setattr(checker, "read_response", lambda *_, **__: response)
     with pytest.raises(checker.DemoCheckError, match="HTTP 200 object"):
         checker.read_demo()
 

@@ -2,12 +2,14 @@ import os
 from contextlib import asynccontextmanager
 
 import redis
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import engine
-from app.api import delivery_receipts, invoices, purchase_orders, suppliers
+from app.auth import AccessTokenVerifier
+from app.cognito import access_token_settings
+from app.api import delivery_receipts, invoices, me, memberships, purchase_orders, suppliers, workspaces
 
 
 def create_redis_client() -> redis.Redis:
@@ -22,6 +24,8 @@ def create_redis_client() -> redis.Redis:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if app.state.token_verifier is None:
+        app.state.token_verifier = AccessTokenVerifier(access_token_settings())
     app.state.redis = create_redis_client()
     try:
         yield
@@ -32,20 +36,11 @@ async def lifespan(app: FastAPI):
             engine.dispose()
 
 
-app = FastAPI(title="Supplier-Invoice-Verification API", lifespan=lifespan)
-app.include_router(suppliers.router)
-app.include_router(purchase_orders.router)
-app.include_router(delivery_receipts.router)
-app.include_router(invoices.router)
-
-
-@app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/ready")
-def ready(response: Response) -> dict[str, str]:
+def ready(response: Response, request: Request) -> dict[str, str]:
     database_status = "ok"
     redis_status = "ok"
 
@@ -56,7 +51,7 @@ def ready(response: Response) -> dict[str, str]:
         database_status = "unavailable"
 
     try:
-        app.state.redis.ping()
+        request.app.state.redis.ping()
     except (redis.RedisError, OSError):
         redis_status = "unavailable"
 
@@ -69,3 +64,16 @@ def ready(response: Response) -> dict[str, str]:
         }
 
     return {"status": "ready", "database": "ok", "redis": "ok"}
+
+
+def create_app(*, verifier: AccessTokenVerifier | None = None) -> FastAPI:
+    application = FastAPI(title="Supplier-Invoice-Verification API", lifespan=lifespan)
+    application.state.token_verifier = verifier
+    for router in (suppliers.router, purchase_orders.router, delivery_receipts.router, invoices.router, me.router, workspaces.router, memberships.router):
+        application.include_router(router)
+    application.add_api_route("/health", health, methods=["GET"])
+    application.add_api_route("/ready", ready, methods=["GET"])
+    return application
+
+
+app = create_app()

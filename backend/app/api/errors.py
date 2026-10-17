@@ -1,6 +1,7 @@
 from collections.abc import Callable
 
-from fastapi import Request
+from fastapi import Depends, Request
+from fastapi.security import HTTPBearer
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -19,7 +20,15 @@ class BusinessError(Exception):
     def response(self) -> JSONResponse:
         return JSONResponse(status_code=self.status, content={"error": {
             "code": self.code, "message": self.message, "details": self.details,
-        }})
+        }}, headers={"Cache-Control": "no-store", **({"WWW-Authenticate": "Bearer"} if self.status == 401 else {})})
+
+
+def unauthorized() -> BusinessError:
+    return BusinessError(401, "unauthorized", "Valid authentication is required.")
+
+
+def forbidden() -> BusinessError:
+    return BusinessError(403, "forbidden", "You do not have permission for this request.")
 
 
 def unavailable() -> BusinessError:
@@ -43,6 +52,7 @@ SAFE_FIELDS = {
     "purchase_order_id", "purchase_order_line_id", "receipt_number", "received_date",
     "delivery_receipt_id", "quantity_received", "invoice_id", "invoice_number",
     "invoice_date", "due_date", "tax_amount", "total",
+    "slug", "application_user_id", "role",
 }
 
 
@@ -96,11 +106,14 @@ def validation_response(error: RequestValidationError) -> JSONResponse:
 
 
 class BusinessRoute(APIRoute):
-    """Sanitize business errors without changing foundation endpoint handlers."""
+    """Authenticate and authorize before body parsing; preserve safe errors."""
+
+    workspace_mode = "business"
 
     def __init__(self, *args, **kwargs):
         # Explicit 422 replaces FastAPI's default detail schema in OpenAPI.
         kwargs["responses"] = {**(kwargs.get("responses") or {}), **BUSINESS_ERROR_RESPONSES}
+        kwargs["dependencies"] = [*(kwargs.get("dependencies") or []), Depends(HTTPBearer(auto_error=False, scheme_name="BearerAuth"))]
         super().__init__(*args, **kwargs)
 
     def get_route_handler(self) -> Callable:
@@ -108,9 +121,14 @@ class BusinessRoute(APIRoute):
 
         async def handler(request: Request):
             try:
-                if "workspace_id" in request.query_params:
-                    raise invalid("workspace_id", "This field is not allowed.")
-                return await original_handler(request)
+                from app.api.authorization import authorized_request
+
+                async with authorized_request(request, self.workspace_mode):
+                    if "workspace_id" in request.query_params:
+                        raise invalid("workspace_id", "This field is not allowed.")
+                    response = await original_handler(request)
+                    response.headers["Cache-Control"] = "no-store"
+                    return response
             except RequestValidationError as error:
                 return validation_response(error)
             except BusinessError as error:
@@ -121,3 +139,11 @@ class BusinessRoute(APIRoute):
                 return BusinessError(500, "internal_error", "The request could not be completed.").response()
 
         return handler
+
+
+class AccountRoute(BusinessRoute):
+    workspace_mode = "none"
+
+
+class MembershipRoute(BusinessRoute):
+    workspace_mode = "path"

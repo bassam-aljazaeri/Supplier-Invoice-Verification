@@ -7,12 +7,15 @@ The local website has Status, supplier, purchase-order, delivery-record, and
 draft-invoice pages backed by PostgreSQL. Step 3.6 adds an explicit repeatable
 fictional demo and disposable persistence verification. This milestone is a
 local manual-record application. Extraction, automatic discrepancy detection,
-authentication, and approval remain later work.
+and approval remain later work.
 
-Step 4.3 adds application-user/workspace-membership persistence and an explicit
-local operator bootstrap command. It does not yet protect business routes or
-add login; current API behavior remains unchanged. See
-[the operator instructions](#user-and-membership-persistence-step-43).
+Step 4.4 protects all business APIs with Cognito access-token verification and
+database workspace permissions. Identity, workspace, and membership APIs are
+available. **The existing frontend needs Step 4.5 login integration before it
+can access business records.** Its public Status page still works. See
+[the current authentication instructions](#backend-authentication-and-authorization-step-44).
+The older Step 3 examples below describe business payloads; their requests now
+also require the authentication and workspace headers documented there.
 
 For setup and the 10 ordered / 8 delivered / 10 invoiced demonstration, see
 [the demo guide](docs/demo.md) and [the seed instructions below](#repeatable-fictional-demo-step-36).
@@ -844,10 +847,10 @@ Step 4.3 adds the following persistence migration.
 
 This checkpoint adds `application_users` and `workspace_memberships`, revision
 `0002_auth_workspaces`, internal persistence services, and an explicit local
-operator command. **Business routes still have their existing unauthenticated
-demo behavior.** Assigning a role does not yet restrict API access. Token
-verification, protected routes, `/me`, membership HTTP APIs, frontend login,
-approval actions, and additional AWS resources are outside this checkpoint.
+operator command. This section records the persistence checkpoint. Step 4.4
+now enforces those roles on protected routes and adds `/me`, workspace, and
+membership APIs. Frontend login, approval actions, and additional AWS resources
+remain outside these checkpoints.
 
 Users have a server UUID, the exact case-sensitive `(issuer, subject)` identity,
 active status, and creation/update timestamps. No email, password, or token is
@@ -861,8 +864,9 @@ or business record. The applied `0001_manual_records` is unchanged.
 
 No Cognito configuration was present before this step. The tracked `.env.example`
 now documents placeholders for `COGNITO_REGION` and `COGNITO_USER_POOL_ID`, and
-Compose passes them to the API container. Empty values preserve current API
-startup; the operator command refuses missing, malformed, or mismatched values
+Compose passes them to the API container. Step 4.4 additionally requires
+`COGNITO_APP_CLIENT_ID` for API startup; there is no unauthenticated fallback.
+The operator command refuses missing, malformed, or mismatched region/pool values
 before opening a database session. No actual environment file is supplied or
 changed by this implementation. You can set the two values in your current
 PowerShell process instead of editing a file.
@@ -886,7 +890,7 @@ leave the operator command for later. Disposable tests need neither.
 
 These are **Windows host PowerShell commands** from the project root for a
 later user-run update of the chosen local database. Python and Alembic execute
-inside the **Linux API container**. Replace all three uppercase placeholders
+inside the **Linux API container**. Replace all uppercase placeholders
 with the intended pool's values before running. The build/recreate is necessary
 to load Compose settings and the migration packaged in the image; it retains
 PostgreSQL's existing volume. Codex has not run these against development.
@@ -894,6 +898,7 @@ PostgreSQL's existing volume. Codex has not run these against development.
 ```powershell
 $env:COGNITO_REGION = 'YOUR_REGION'
 $env:COGNITO_USER_POOL_ID = 'YOUR_USER_POOL_ID'
+$env:COGNITO_APP_CLIENT_ID = 'YOUR_PUBLIC_APP_CLIENT_ID'
 docker compose up --build -d api
 docker compose exec -T api alembic upgrade head
 docker compose exec -T api alembic current
@@ -940,9 +945,9 @@ through import, startup, migrations, `seed_workspace`, or `seed_demo`.
 `services.memberships` never commit or roll back. Their caller owns one
 transaction and must commit success or roll back failure. The CLI's
 `bootstrap_membership` wrapper owns that boundary; its `ensure_bootstrap_membership`
-helper can participate in another caller's transaction. Current API routes do
-not call these services. Future HTTP callers must authenticate and check their
-administrator authority after obtaining the workspace lock.
+helper can participate in another caller's transaction. Step 4.4 membership
+routes authenticate and recheck administrator authority after obtaining the
+workspace lock, then reuse the same services and transaction.
 
 All membership additions, role changes, and removals lock the existing workspace
 row with `SELECT ... FOR UPDATE`, then lock/reread the target user and membership.
@@ -990,3 +995,202 @@ tests with the explicit opt-in reason. Both runs reported the existing
 Starlette/httpx deprecation warning. These local results are not an online
 GitHub CI result; frontend checks were not rerun because frontend files did not
 change.
+
+## Backend authentication and authorization (Step 4.4)
+
+Every supplier, purchase-order, delivery-receipt, and invoice operation now
+requires a verified Cognito access token and a current PostgreSQL membership.
+The backend identifies a person by the exact verified `(issuer, sub)` pair;
+email, groups, role headers, and browser controls do not grant authority.
+Administrators/accountants create business records; all three roles read them.
+Only administrators manage memberships. Approval actions remain deferred.
+
+The schema is still `0002_auth_workspaces`. No new migration or destructive
+reset is needed for Step 4.4; existing data and memberships remain in place.
+`app.bootstrap_membership` remains an explicit operator command, never a public
+endpoint or startup action. Fresh authenticated users get their own application
+ID through `/me`, without automatic access to `local-demo` or another workspace.
+
+### Required configuration and startup
+
+Use the existing intended Cognito user pool and a public browser app client
+without a client secret. This change creates no AWS resources. The three public
+backend settings are:
+
+| Setting | Purpose |
+| --- | --- |
+| `COGNITO_REGION` | Pool region. |
+| `COGNITO_USER_POOL_ID` | Region-prefixed pool ID; derives the trusted original regional issuer and its `/.well-known/jwks.json` URL. |
+| `COGNITO_APP_CLIENT_ID` | Public app client ID; must match the access token's `client_id`. |
+
+The tracked `.env.example` contains placeholders only. Actual local environment
+files were not inspected or changed. You can configure a PowerShell process
+without writing a file. Replace the placeholders, then run these **Windows host
+PowerShell commands** for a later deliberate development API update:
+
+```powershell
+$env:COGNITO_REGION = 'YOUR_REGION'
+$env:COGNITO_USER_POOL_ID = 'YOUR_USER_POOL_ID'
+$env:COGNITO_APP_CLIENT_ID = 'YOUR_PUBLIC_APP_CLIENT_ID'
+docker compose up --build -d api
+Invoke-RestMethod 'http://127.0.0.1:8000/health'
+Invoke-RestMethod 'http://127.0.0.1:8000/ready'
+```
+
+Startup validates all three settings without contacting Cognito or writing to
+PostgreSQL. Missing/malformed values prevent API startup rather than expose
+unprotected business routes. Once configured, `/health` and `/ready` stay public
+with their original bodies and dependency behavior; public `/docs` and
+`/openapi.json` expose schema only. No AWS IAM key, client secret, signing key
+file, arbitrary JWKS URL setting, auth-disable switch, or demo bypass is used.
+Loopback host-port binding and the existing PostgreSQL volume are unchanged.
+
+Do not run migrations or seed commands merely to repair an authentication
+failure. The user's existing Step 4.3 development migration and bootstrap were
+recorded complete; Codex did not inspect or alter development data in Step 4.4.
+For a genuinely fresh setup, use the earlier explicit migration/workspace/seed
+commands against the deliberately chosen database, retaining its volume.
+
+### Verify a real access token manually when available
+
+Step 4.5 will implement browser Authorization Code Flow with PKCE. Until then,
+use an access token obtained through the intended Cognito app client's existing
+authorized flow, or use the fully synthetic checker below. This repository
+provides no application endpoint that mints tokens. An ID token is not an API
+credential. Real Cognito login has not been verified by the automated tests.
+
+These **Windows host PowerShell commands** prompt without echoing the token and
+keep it in process memory; do not store it in a file or add it to Git:
+
+```powershell
+$authSecureToken = Read-Host 'Cognito access token' -AsSecureString
+$authHeaders = @{ Authorization = 'Bearer ' + ([System.Net.NetworkCredential]::new('', $authSecureToken).Password) }
+$authMe = Invoke-RestMethod 'http://127.0.0.1:8000/me' -Headers $authHeaders
+$authMe.user
+$authMe.memberships | Select-Object workspace_id, role
+Invoke-RestMethod 'http://127.0.0.1:8000/workspaces' -Headers $authHeaders
+```
+
+`/me` registers a missing verified application identity and returns `user` plus
+the caller's own `memberships`. With no memberships, use the returned own UUID
+to request access from an administrator, deliberately bootstrap through the
+existing local operator command, or create a workspace. Other protected APIs
+require this initial `/me` registration. The operator command still requires
+the trusted pool's copied subject and must not use an unverified token decode.
+
+Workspace creation needs no selected-workspace header. From **Windows host
+PowerShell**, with the in-memory bearer headers above:
+
+```powershell
+$authWorkspacePayload = @{ slug = 'fictional-team'; name = 'Fictional team' } | ConvertTo-Json
+Invoke-RestMethod 'http://127.0.0.1:8000/workspaces' -Method Post -Headers $authHeaders -ContentType 'application/json' -Body $authWorkspacePayload
+```
+
+It returns 201 only after the workspace and caller's first administrator
+membership commit together. Slugs use lowercase letters/digits with single
+hyphens, maximum 64 characters; `local-demo` is reserved. A lost write response
+must be checked against the caller's workspace list before a manual retry.
+
+Business requests require exactly one `X-Workspace-ID` chosen from current
+accessible workspaces. This is an untrusted selection; the server verifies
+membership for every request. From **Windows host PowerShell**:
+
+```powershell
+$authBusinessHeaders = $authHeaders.Clone()
+$authBusinessHeaders['X-Workspace-ID'] = 'COPY_ACCESSIBLE_WORKSPACE_UUID'
+Invoke-RestMethod 'http://127.0.0.1:8000/suppliers' -Headers $authBusinessHeaders
+Remove-Variable authSecureToken, authHeaders, authBusinessHeaders
+```
+
+Do not send `X-Workspace-ID` on `/me`, `/workspaces`, or membership-management
+routes. Membership routes use only their path workspace ID. Backend paths omit
+`/api`; the existing Vite proxy adds/removes that prefix for browser requests.
+
+| Membership API | Contract |
+| --- | --- |
+| `GET /workspaces/{workspace_id}/memberships` | Administrator-only paginated list. |
+| `POST /workspaces/{workspace_id}/memberships` | Existing active `application_user_id` and exact `role`; 201 after commit. No email lookup or invitation. Duplicate membership is 409. |
+| `PATCH /workspaces/{workspace_id}/memberships/{application_user_id}` | Only `role`; 200, with harmless same-role assignment. |
+| `DELETE /workspaces/{workspace_id}/memberships/{application_user_id}` | 204 after commit; removing/demoting the last active administrator is 409. |
+
+List defaults/ranges remain limit 20 (1-100), offset 0 (0-10000). Workspace
+discovery and its counts include only caller memberships. Membership changes
+take the workspace lock and reread caller authority after waiting, so a removed
+or demoted administrator cannot act using a stale dependency result.
+
+### Verification and failure behavior
+
+PyJWT with cryptography verifies real RS256 signatures, exact issuer, required
+subject/time claims, `token_use=access`, and matching app client ID. The reviewed
+unbound Cognito access-token profile rejects any `aud` claim; resource-bound
+tokens need a later explicit audience contract. ID/unsigned/forged tokens and
+other algorithms are rejected. Token-provided key URLs are never followed.
+
+Trusted public keys are cached for five minutes. Refreshes, including unknown
+key handling, are limited to once per 30 seconds per process. Fetches have a
+three-second total deadline covering lock wait and the full response, a 64 KiB
+body cap, and no redirects or environment proxy configuration. Known keys in a
+valid cache may verify during outage; expired keys are never a fallback.
+
+Errors retain `error.code`, `error.message`, and `error.details`. Missing/invalid
+credentials are 401 with `WWW-Authenticate: Bearer`; denied membership/role or
+inactive identity is 403. Missing/malformed/duplicate workspace selection is
+422. Records/references outside an authorized workspace are 404, while selecting
+an inaccessible/nonexistent workspace is an indistinguishable 403. An unknown
+key after a successful JWKS refresh is 401; required signing-key retrieval or
+database unavailability is sanitized 503. Tokens, SQL, and internal exception
+details are not returned or logged. Protected responses use `no-store`; Uvicorn
+access logs are disabled to avoid recording sensitive query strings.
+
+Roles and local active status are reread from PostgreSQL on every request, so
+committed removals/demotions affect the next request with the same unexpired
+token. Logout alone does not immediately invalidate an issued JWT to an offline
+signature verifier; local membership removal/deactivation is the immediate
+application denial mechanism. No deactivation HTTP API is added here.
+
+### Isolated authenticated verification
+
+From **Windows host PowerShell**, run:
+
+```powershell
+.\scripts\check-backend.ps1
+```
+
+Alembic/pytest and real HTTP checks execute inside **Linux containers**. The
+retained guards require a unique disposable Compose project, explicit test
+database/user, PostgreSQL 17, and the connected project marker before writes.
+No actual local environment file, live AWS account, credentials, or user token
+is required. Only generated synthetic disposable settings are used and removed.
+
+The CI override alone launches `tests.run_http_api`, a separate guarded
+entrypoint. It generates a temporary RSA key inside that disposable API
+container; the real verifier receives only its public JWKS through an injected
+test key source. The private key stays in a restricted `/tmp` directory and
+signs fresh short-lived synthetic tokens for checker processes. Keys survive
+the same container's restart, then disappear when it is removed. Unit tests also
+exercise the production HTTPS transport using controlled responses. No test
+replaces signature verification or database authorization with a blanket mock.
+
+After migrations and pytest, the checker explicitly initializes the workspace,
+registers the signed synthetic user through `/me`, runs the operator bootstrap,
+and seeds twice. Authenticated detail/list/filter snapshots must match after
+API/PostgreSQL restart with volume retained. Actual HTTP checks also reject an
+absent token, a forged signature, and a non-member, and prove scoped 404s. Public
+health/readiness checks remain unauthenticated before migrations and throughout
+dependency outage/recovery. All disposable containers, volumes, and key artifacts
+are cleaned up even on failure. CI adds the `feat/auth-workspaces` push branch
+and retains the unchanged frontend job and read-only permissions.
+
+The existing frontend business pages cannot yet attach the required credentials
+or workspace selection. Step 4.5 is required before using those pages; Status
+remains available. Real Cognito/browser and online CI results must be recorded
+separately from local generated-key verification in [progress](docs/progress.md).
+
+Local Step 4.4 verification on 2026-10-17 passed: **684 backend tests** with
+guarded PostgreSQL, authenticated HTTP denial/scoping checks, repeated seeding,
+unchanged snapshots after API/PostgreSQL restart, public outage/recovery, and
+disposable cleanup. Offline backend pytest passed **222 tests** with 462 explicit
+PostgreSQL opt-in skips. Unchanged frontend checks passed **140 tests**, lint,
+and production build; local actionlint and PowerShell syntax checks passed.
+The existing Starlette TestClient/httpx deprecation warning remains. No real
+Cognito/browser login or online GitHub Actions run was observed.

@@ -18,8 +18,9 @@ SENSITIVE = "synthetic-private-value-that-must-not-appear-in-errors"
 
 
 @pytest.fixture
-def demo_api(api_client, schema_session):
+def demo_api(api_client, schema_session, grant_demo_access):
     initialize_workspace(schema_session)
+    grant_demo_access()
     return api_client
 
 
@@ -186,17 +187,17 @@ def test_missing_details_are_not_found(demo_api, path):
 
 def test_workspace_is_required_but_never_created_on_requests(api_client, schema_session):
     for path in ("/suppliers", "/purchase-orders", f"/suppliers/{uuid4()}", f"/purchase-orders/{uuid4()}"):
-        assert_error(api_client.get(path), 503, "service_unavailable")
-    assert_error(api_client.post("/suppliers", json=supplier_payload()), 503, "service_unavailable")
-    assert_error(api_client.post("/purchase-orders", json=order_payload(str(uuid4()))), 503, "service_unavailable")
+        assert_error(api_client.get(path), 403, "forbidden")
+    assert_error(api_client.post("/suppliers", json=supplier_payload()), 403, "forbidden")
+    assert_error(api_client.post("/purchase-orders", json=order_payload(str(uuid4()))), 403, "forbidden")
     assert schema_session.scalar(select(func.count()).select_from(Workspace)) == 0
     assert api_client.get("/health").json() == {"status": "ok"}
 
 
-def test_conflicting_demo_workspace_is_unavailable(api_client, schema_session):
+def test_ungranted_demo_workspace_does_not_give_access(api_client, schema_session):
     schema_session.add(Workspace(id=DEMO_WORKSPACE_ID, slug=DEMO_WORKSPACE_SLUG, name="Synthetic wrong name"))
     schema_session.commit()
-    assert_error(api_client.get("/suppliers"), 503, "service_unavailable")
+    assert_error(api_client.get("/suppliers"), 403, "forbidden")
 
 
 def test_cross_workspace_records_are_hidden_and_references_rejected(demo_api, schema_session):
