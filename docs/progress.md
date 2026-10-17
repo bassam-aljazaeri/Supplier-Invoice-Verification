@@ -1,7 +1,7 @@
 # Progress
 
-Current milestone: 4 - Authentication and workspace authorization (implemented; real login and core permission checks verified; final GitHub CI pending)
-Current task: Step 4.7 - final GitHub checks and pull-request review
+Current milestone: 4 - Authentication and workspace authorization (implementation and validation complete)
+Current task: Merge pull request #3 and synchronize local main
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -571,12 +571,11 @@ Step 4 user verification:
 - Last-administrator protection behaved as expected.
 - Logout cleared authenticated application state and required login for business access.
 - The callback cancellation regression was corrected; Codex reported 218 frontend tests, lint, and build passing.
-- Final online GitHub CI verification remains pending.
+- GitHub push and pull-request backend/frontend checks passed for commit 2152ef0.
 
 Next task:
-- Commit and push the browser login implementation and verification record.
-- Create the Step 4 pull request and inspect backend/frontend checks on its latest revision.
-- Keep the pull request open for final review before merging.
+- Merge pull request #3 after its latest checks pass and synchronize local main.
+- Prepare the tools and skills required for Milestone 5 before implementation.
 
 Step 4.5 login redirect correction:
 - Traced the exact cancellation message to `BrowserSession.cancelPending` in `frontend/src/session.ts`. The Continue button invokes `session.signIn`; the runtime delegates external navigation to `window.location.assign`. There is no `beforeunload`/`pagehide` cancellation listener or unsaved-changes blocker in this implementation. Bootstrap runs outside React/StrictMode, and business-request cleanup does not call the authentication cancellation handler. Redirect exceptions use a different sanitized message.
@@ -589,5 +588,5 @@ Step 4.5 login redirect correction:
 Remaining limits:
 - Real Cognito login and core workspace/role workflows were verified by the user, as recorded above.
 - Expiry/renewal failures and interrupted writes have automated coverage but were not manually verified with real Cognito.
-- Final online GitHub CI verification remains pending.
+- GitHub push and pull-request backend/frontend checks passed for commit 2152ef0.
 - Approval, uploads, AI, exports, and deployment remain outside this milestone.
