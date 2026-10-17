@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { ReactNode } from 'react'
 import { parseHash, subscribeHashChange } from './navigation.ts'
+import type { Route } from './navigation.ts'
+import { useSession } from './authContext.tsx'
+import { canCreate, canManage } from './authTypes.ts'
+import WorkspaceSelector from './components/WorkspaceSelector.tsx'
+import SignInPage from './pages/SignInPage.tsx'
+import AccountPage from './pages/AccountPage.tsx'
+import WorkspaceNewPage from './pages/WorkspaceNewPage.tsx'
+import MembershipsPage from './pages/MembershipsPage.tsx'
 import { newDeliveryDraft, newInvoiceDraft, newOrderDraft, newSupplierDraft } from './validation.ts'
 import type { SaveFeedback } from './hooks/useBusiness.ts'
 import Navigation from './components/Navigation.tsx'
@@ -21,10 +30,7 @@ import './App.css'
 const subscribe = (listener: () => void) => subscribeHashChange(listener)
 const snapshot = () => window.location.hash
 
-function App() {
-  const hash = useSyncExternalStore(subscribe, snapshot, () => '')
-  const route = parseHash(hash)
-  const content = useRef<HTMLElement>(null)
+function BusinessPages({ route, hash, override }: { route: Route; hash: string; override?: ReactNode }) {
   // Drafts and failed-save feedback survive page changes, but never enter storage.
   const [supplierDraft, setSupplierDraft] = useState(newSupplierDraft)
   const [orderDraft, setOrderDraft] = useState(newOrderDraft)
@@ -34,7 +40,6 @@ function App() {
   const [orderFeedback, setOrderFeedback] = useState<SaveFeedback>({ pending: false, error: null })
   const [deliveryFeedback, setDeliveryFeedback] = useState<SaveFeedback>({ pending: false, error: null })
   const [invoiceFeedback, setInvoiceFeedback] = useState<SaveFeedback>({ pending: false, error: null })
-  useEffect(() => { content.current?.focus() }, [hash])
 
   let page
   switch (route.kind) {
@@ -53,11 +58,33 @@ function App() {
     case 'invoice-new': page = <InvoiceNewPage draft={invoiceDraft} setDraft={setInvoiceDraft} feedback={invoiceFeedback} setFeedback={setInvoiceFeedback} />; break
     default: page = <section className="business-panel"><h2>Page not found</h2><p>This address does not match an available page, or its page parameters are invalid.</p><a href="#/status">Open Status</a></section>
   }
+  return <div key={hash}>{override ?? page}</div>
+}
+
+function App() {
+  const hash = useSyncExternalStore(subscribe, snapshot, () => '')
+  const route = parseHash(hash)
+  const auth = useSession()
+  const content = useRef<HTMLElement>(null)
+  useEffect(() => { content.current?.focus() }, [hash, auth.version])
+  let page
+  if (route.kind === 'status') page = <StatusPage />
+  else if (['setup', 'signed-out', 'signing-in', 'callback', 'logging-out'].includes(auth.status)) page = <SignInPage returnHash={hash} />
+  else if (auth.status === 'loading') page = <section className="business-panel" role="status"><h2>Loading workspace access</h2><p>Previous private views have been cleared.</p></section>
+  else if (auth.status === 'access-error') page = <section className="business-panel"><h2>Workspace access unavailable</h2><p role="alert">{auth.message}</p><button type="button" onClick={() => { void auth.session.refreshAccess() }}>Retry access information</button></section>
+  else if (route.kind === 'workspace-new') page = <WorkspaceNewPage key={auth.version} />
+  else if (route.kind === 'account' || route.kind === 'signin' || !auth.selected) page = <AccountPage key={auth.version} />
+  else if (route.kind === 'memberships') page = canManage(auth.selected.role) ? <MembershipsPage key={auth.version} /> : <section className="business-panel"><h2>Administrator access required</h2><a href="#/account">Open account</a></section>
+  else if (route.kind.endsWith('-new') && !canCreate(auth.selected.role)) page = <section className="business-panel"><h2>Read-only access</h2><p>Your approver membership can read records. Administrators and accountants can create them.</p><a href="#/suppliers">Open records</a></section>
+  else page = undefined
   return <div className="page-shell">
     <a className="skip-link" href="#page-content" onClick={(event) => { event.preventDefault(); content.current?.focus() }}>Skip to content</a>
-    <header className="page-header"><p className="eyebrow">Local demo</p><h1>Supplier-Invoice-Verification</h1><Navigation route={route} /></header>
-    <main id="page-content" ref={content} tabIndex={-1} key={hash}>{page}</main>
-    <footer className="page-footer"><span>Supplier-Invoice-Verification</span><span>Local services at 127.0.0.1</span></footer>
+    <header className="page-header"><p className="eyebrow">Workspace records</p><h1>Supplier-Invoice-Verification</h1><Navigation route={route} /><WorkspaceSelector /></header>
+    {auth.status === 'setup' && route.kind === 'status' && <p role="status">Browser sign-in needs configuration. <a href="#/signin">Review the public setup settings</a>. Service status remains public.</p>}
+    {auth.warning && <p className="request-error" role="alert">{auth.warning}</p>}
+    {auth.status === 'ready' && auth.message && <p role="status">{auth.message}</p>}
+    <main id="page-content" ref={content} tabIndex={-1}>{auth.status === 'ready' && auth.selected ? <BusinessPages key={auth.version} route={route} hash={hash} override={page} /> : page}</main>
+    <footer className="page-footer"><span>Supplier-Invoice-Verification</span><span>Local services on localhost</span></footer>
   </div>
 }
 

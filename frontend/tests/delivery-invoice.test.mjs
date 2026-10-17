@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { afterEach, beforeEach, test } from 'node:test'
+import { configurePrivateRequests } from '../src/api.ts'
 import { createDeliveryReceipt, createInvoice, getDeliveryReceipt, getDeliveryReceipts, getInvoice, getInvoices } from '../src/api.ts'
 import { deliveryPayload, invoicePayload, MONEY_MAX, newDeliveryDraft, newInvoiceDraft, validateDelivery, validateInvoice } from '../src/validation.ts'
 import { selectDeliveryLine, selectDeliveryOrder, selectInvoiceOrder, selectInvoiceSupplier, selectedOrderDetail } from '../src/selections.ts'
@@ -15,6 +16,8 @@ const secondOrderLineId = '21000000-0000-4000-8000-000000000012'
 const receiptId = '30000000-0000-4000-8000-000000000011'
 const invoiceId = '40000000-0000-4000-8000-000000000011'
 const common = { workspace_id: '00000000-0000-4000-8000-000000000001', created_at: '2026-10-13T09:00:00Z' }
+beforeEach(() => configurePrivateRequests({ workspaceId: common.workspace_id, accessToken: async () => 'synthetic-access-token', onFailure: () => {} }))
+afterEach(() => configurePrivateRequests(null))
 const supplier = { ...common, id: supplierId, supplier_code: 'SYNTHETIC-OFFICE', name: 'Fictional Office Supplier', notes: null }
 const otherSupplier = { ...supplier, id: otherSupplierId, supplier_code: 'SYNTHETIC-OTHER' }
 const orderSummary = { ...common, id: orderId, supplier_id: supplierId, po_number: 'PO-SYNTHETIC-11', order_date: '2026-10-13', currency: 'EUR', notes: null, subtotal: '260.00' }

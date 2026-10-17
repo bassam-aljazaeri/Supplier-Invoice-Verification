@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import { ApiFailure } from '../api.ts'
+import { ApiFailure, privateContextVersion } from '../api.ts'
 import { subscribeHashChange } from '../navigation.ts'
 import { createRequestScope } from '../requestScope.ts'
 
 export type SaveFeedback = { pending: boolean; error: ApiFailure | null }
 type ReadResult<T> = { key: string; attempt: number; data: T | null; error: ApiFailure | null }
 
-export function useRead<T>(key: string, load: (signal: AbortSignal) => Promise<T>) {
+export function useRead<T>(inputKey: string, load: (signal: AbortSignal) => Promise<T>) {
+  const key = `${privateContextVersion()}:${inputKey}`
   const [attempt, setAttempt] = useState(0)
   const [pageHash] = useState(() => window.location.hash)
   const [result, setResult] = useState<ReadResult<T> | null>(null)
   useEffect(() => {
-    const scope = createRequestScope()
+    const scope = createRequestScope(privateContextVersion)
     const controller = scope.start()
     const unsubscribe = subscribeHashChange(() => scope.cancel())
     const current = () => scope.isCurrent(controller) && window.location.hash === pageHash
@@ -29,7 +30,7 @@ export function useRead<T>(key: string, load: (signal: AbortSignal) => Promise<T
 
 export function useSave(setFeedback: Dispatch<SetStateAction<SaveFeedback>>) {
   const active = useRef<AbortController | null>(null)
-  const scope = useRef(createRequestScope())
+  const scope = useRef(createRequestScope(privateContextVersion))
   const [pageHash] = useState(() => window.location.hash)
   useEffect(() => {
     const gate = scope.current

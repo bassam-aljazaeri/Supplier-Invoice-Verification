@@ -11,9 +11,11 @@ and approval remain later work.
 
 Step 4.4 protects all business APIs with Cognito access-token verification and
 database workspace permissions. Identity, workspace, and membership APIs are
-available. **The existing frontend needs Step 4.5 login integration before it
-can access business records.** Its public Status page still works. See
-[the current authentication instructions](#backend-authentication-and-authorization-step-44).
+available. Step 4.5 adds Cognito browser login, workspace selection, role-aware
+business pages, workspace creation, and administrator membership management.
+Status remains public, including when browser authentication is not configured.
+See [browser setup and verification](#browser-login-and-workspaces-step-45) and
+[backend authentication instructions](#backend-authentication-and-authorization-step-44).
 The older Step 3 examples below describe business payloads; their requests now
 also require the authentication and workspace headers documented there.
 
@@ -62,10 +64,10 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-Open `http://127.0.0.1:5173`. The status page calls `/api/health` and `/api/ready`
+Open `http://localhost:5173`. The status page calls `/api/health` and `/api/ready`
 on the Vite server. Vite forwards those requests to the API at
 `http://127.0.0.1:8000`, removes the `/api` prefix, and sends `/health` or
-`/ready` to FastAPI. The server binds only to `127.0.0.1:5173` and refuses
+`/ready` to FastAPI. The server binds only to the loopback address resolved for `localhost:5173` and refuses
 to start if that port is occupied.
 
 The page checks on load and when you select **Refresh status**. API health,
@@ -576,7 +578,7 @@ tab. They are cleared on successful creation or a full reload, and are never
 written to browser storage. Cancel returns to the list and retains the unsaved
 draft for this session. Interrupted, timed-out, or lost save responses may mean
 the record was already saved. The form preserves its input and offers **Check
-saved records (opens a new tab)** to find the code/number before another Save.
+saved records before retrying** in the same tab to find the code/number before another Save.
 Conflicts offer the same list check. POST requests are never automatically retried.
 
 ### Start the website and run checks
@@ -593,7 +595,7 @@ npm.cmd run build
 npm.cmd run dev
 ```
 
-Open `http://127.0.0.1:5173`. Keep the Vite terminal running while checking pages.
+Open `http://localhost:5173`. Keep the Vite terminal running while checking pages.
 The `/api` proxy applies to development; production hosting/API routing is outside
 this checkpoint.
 
@@ -704,7 +706,7 @@ Both new forms reuse disabled/guarded saving, field labels, inline errors, summa
 focus behavior, keyboard controls, full-body five-second requests, and cancellation.
 Input and error feedback remain in memory across navigation in the same tab.
 Interrupted/network/timed-out save responses may mean a document was saved: check
-the linked list in a new tab for its number before a manual retry. POST requests
+the linked list in the same tab for its number before a manual retry. POST requests
 are never automatically retried. Successful creation clears the corresponding
 draft and navigates using the returned top-level document ID. Full reload clears
 unsaved drafts; saved deep links retrieve records from the API.
@@ -721,7 +723,7 @@ npm.cmd run build
 npm.cmd run dev
 ```
 
-Open `http://127.0.0.1:5173`. Use existing fictional records for read-only checks.
+Open `http://localhost:5173`. Use existing fictional records for read-only checks.
 Exercise creation only in your chosen synthetic verification stack; Save writes
 records to the database served by that API. No development writes or actual
 browser checks were performed during Step 3.5B implementation.
@@ -782,7 +784,9 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-Open `http://127.0.0.1:5173/#/status`, then follow [the browser demonstration](docs/demo.md).
+Open `http://localhost:5173/#/status`, then follow [the browser demonstration](docs/demo.md).
+For its historical browser instructions, use canonical localhost, sign in, and
+select an explicitly accessible workspace first, as described in Step 4.5 below.
 Stop Vite before `npm ci` if it is already running. The documented fixed IDs are
 for this fixture; ordinary forms continue to use returned server IDs.
 
@@ -1181,9 +1185,9 @@ dependency outage/recovery. All disposable containers, volumes, and key artifact
 are cleaned up even on failure. CI adds the `feat/auth-workspaces` push branch
 and retains the unchanged frontend job and read-only permissions.
 
-The existing frontend business pages cannot yet attach the required credentials
-or workspace selection. Step 4.5 is required before using those pages; Status
-remains available. Real Cognito/browser and online CI results must be recorded
+At the Step 4.4 checkpoint, frontend business pages could not yet attach credentials
+or workspace selection. Step 4.5 below now implements that browser integration;
+Status remains available. Real Cognito/browser and online CI results must be recorded
 separately from local generated-key verification in [progress](docs/progress.md).
 
 Local Step 4.4 verification on 2026-10-17 passed: **684 backend tests** with
@@ -1194,3 +1198,195 @@ PostgreSQL opt-in skips. Unchanged frontend checks passed **140 tests**, lint,
 and production build; local actionlint and PowerShell syntax checks passed.
 The existing Starlette TestClient/httpx deprecation warning remains. No real
 Cognito/browser login or online GitHub Actions run was observed.
+
+## Browser login and workspaces (Step 4.5)
+
+The browser uses `oidc-client-ts` Authorization Code Flow with PKCE and a nonce.
+Its access token authorizes same-origin `/api` requests; ID and refresh tokens
+are never API credentials. The backend continues to verify signatures and
+current database permissions independently. No backend behavior, migration,
+development data, or AWS resource changes are part of this step.
+
+### Public configuration and startup
+
+`frontend/.env.example` contains public placeholders only. The existing ignore
+rules keep `frontend/.env.local` ignored and the example trackable. Actual local
+environment files were not read or changed by this implementation. Never put
+client secrets, AWS credentials, signing keys, tokens, or financial records in
+frontend settings.
+
+| Public setting | Required value |
+| --- | --- |
+| `VITE_COGNITO_AUTHORITY` | Original regional issuer derived from the backend's region/pool: `https://cognito-idp.REGION.amazonaws.com/POOL_ID`. China uses `amazonaws.com.cn`. No trailing slash. |
+| `VITE_COGNITO_CLIENT_ID` | The same public browser app client as backend `COGNITO_APP_CLIENT_ID`, without a client secret. |
+| `VITE_COGNITO_DOMAIN` | Controlled HTTPS managed-login domain, such as `https://PREFIX.auth.REGION.amazoncognito.com`, without a path or trailing slash. Match the domain in the pool's discovery endpoints, including its custom domain when applicable. |
+| `VITE_AUTH_CALLBACK_URL` | Exactly `http://localhost:5173/auth/callback`, with no hash fragment. |
+| `VITE_AUTH_LOGOUT_URL` | Exactly `http://localhost:5173/`. |
+
+These names supersede the earlier design's `VITE_COGNITO_ISSUER`,
+`VITE_AUTH_REDIRECT_URI`, and `VITE_AUTH_LOGOUT_URI`. This checkpoint validates
+the reviewed local URLs only; cloud deployment remains outside scope. Missing
+or inconsistent settings show setup guidance while public Status remains usable.
+Discovery issuer, authorization/token/revocation endpoints, and JWKS location
+must match the configured pool/domain before authentication proceeds.
+
+For your existing intended user pool/app client, verify its registered callback
+and logout URLs above, public client without secret, authorization-code grant,
+and `openid` scope. Do not request API resource binding: the backend's reviewed
+access-token profile rejects `aud`. No AWS changes or account inspection were
+performed here. Cognito documents the [code/PKCE endpoint](https://docs.aws.amazon.com/cognito/latest/developerguide/authorization-endpoint.html),
+[domain discovery behavior](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-assign-domain.html),
+and [refresh-token grant](https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-the-refresh-token.html).
+
+With the already configured/migrated backend running, use a **Windows host
+PowerShell** terminal at the repository root. Replace all uppercase placeholders
+with the intended existing pool/client/domain. This process-only option needs no
+actual frontend environment file:
+
+```powershell
+Set-Location frontend
+npm.cmd ci --no-audit --no-fund
+$env:SIV_NO_ENV_FILES = '1'
+$env:VITE_COGNITO_AUTHORITY = 'https://cognito-idp.YOUR_REGION.amazonaws.com/YOUR_USER_POOL_ID'
+$env:VITE_COGNITO_CLIENT_ID = 'YOUR_PUBLIC_APP_CLIENT_ID'
+$env:VITE_COGNITO_DOMAIN = 'https://YOUR_LOGIN_DOMAIN.auth.YOUR_REGION.amazoncognito.com'
+$env:VITE_AUTH_CALLBACK_URL = 'http://localhost:5173/auth/callback'
+$env:VITE_AUTH_LOGOUT_URL = 'http://localhost:5173/'
+npm.cmd run dev
+```
+
+Open `http://localhost:5173/#/signin`, then choose **Continue to Cognito**.
+Vite binds only to the loopback address resolved for `localhost`, uses port 5173
+with strict port checking, and still proxies `/api` to `http://127.0.0.1:8000`.
+Do not start login at `127.0.0.1`: it has a different browser-storage origin.
+If you deliberately use your own ignored frontend settings file later, omit
+`SIV_NO_ENV_FILES` from that new terminal; it disables all Vite environment-file
+loading but continues to accept public process variables. It does not disable
+authentication. Restart Vite after changing public settings.
+
+The callback is handled before hash routing and before React mounts. It is
+coalesced so StrictMode cannot exchange the same code twice. The original URL
+is passed only to the library and its code/state query is removed from browser
+history immediately. The library validates state/nonce and completes the PKCE code exchange; only
+known internal hash routes may be used as return destinations. Cancellation,
+denial, replay, mismatch, timeout, or stale state offers an explicit new sign-in.
+Leaving while login/callback is pending prevents a late redirect.
+
+### Account, workspaces, and permissions
+
+Successful authentication calls `/me` and shows the verified application-user
+ID on **Account**. The workspace selector uses that response's own membership
+and workspace objects; no separate global workspace/user directory is needed.
+One accessible workspace may be selected automatically; multiple require an
+explicit choice. The selected role is displayed. Zero memberships shows how to
+share your application-user ID with a trusted administrator or create a new
+workspace. Signing in never grants `local-demo` access.
+
+**Create a workspace** uses the existing atomic API; its creator becomes its
+first administrator. Return to Account and select it deliberately when needed.
+**Memberships** is available only to an administrator. Add by existing active
+application-user UUID, change the listed role, or remove the membership. The
+backend enforces all permissions and concurrent last-administrator protection.
+409 errors explain duplicate assignments/last-administrator conflicts; use
+**Refresh memberships** before deciding on another action. Nothing retries a
+write automatically. Ordinary users have no email search or public bootstrap.
+
+All roles can read business records. Administrator/accountant memberships enable
+create links/forms; approver memberships show read-only views. Every business
+request includes `Authorization: Bearer <access token>` and the untrusted
+selected `X-Workspace-ID`. `/me`, workspace creation, and path-scoped membership
+APIs send the access token without that selection header. Status calls stay
+independent and send neither header.
+
+Changing workspace, identity, role context, or losing access cancels private
+requests and clears previous records, selections, drafts, and feedback. The
+request transport and completion guards prevent old results from repopulating
+another context. Normal page navigation retains business drafts within the
+same workspace. Account/membership forms are page-local. An interrupted or
+timed-out dispatched write may have committed; a warning remains associated
+with its original workspace when switching. Check that workspace's records
+before manually retrying. Aborting a request does not prove database rollback.
+
+401 ends the local session and offers login. 403 preserves authentication,
+clears private views and refreshes `/me` permissions without replaying the
+denied request. Access-information failure offers an explicit retry. A 503
+allows service recovery without forced logout. Decimal strings, exact backend
+calculations, existing validation, and five-second request/body bounds remain.
+
+### Session limits and logout
+
+Access, ID, and refresh tokens stay only in an explicitly configured in-memory
+library user store. They never enter localStorage, sessionStorage, cookies, or
+IndexedDB. Only transient PKCE/state/nonce correlation uses the library's
+dedicated `siv.pkce.` sessionStorage namespace; consumed, cancelled, abandoned,
+and older-than-15-minute entries are cleared. Tokens and raw provider errors are
+never displayed/logged. A browser reload/new tab can require a fresh login
+redirect and loses unsaved forms; Cognito's cookie may reduce interaction.
+
+Renewal is coalesced at 60 seconds before expiry and checked again before each
+private dispatch after tab suspension. It uses the library's refresh-token path
+only while the refresh token is in memory, retaining rotations. Automatic silent
+renewal/session monitoring and iframe fallback are disabled. Renewal has a
+10-second total bound. Missing/failed refresh, timeout, changed identity, or a
+result that does not extend the session clears local authentication and requires
+explicit login, with no redirect loop. Late work remains confined to discarded
+stores and cannot restore a logged-out session.
+
+**Sign out** first clears local tokens, identity, workspace selection, private
+requests, records, and forms. It then attempts bounded best-effort refresh-token
+revocation and opens Cognito `/logout` with `client_id` and the configured
+`logout_uri`. Local cleanup remains effective if revocation/navigation fails;
+generic OIDC end-session parameters are not used. Leaving during this pending
+navigation cancels its late redirect. Logout/revocation alone does not make an
+already issued access JWT immediately invalid to the backend's offline verifier;
+it can remain valid until expiry. Committed database role/removal/active-status
+changes remain authoritative on the next API request.
+
+### Repeat automated and manual verification
+
+From **Windows host PowerShell** at the repository root, these commands require
+no actual environment files, backend/database, AWS account, or live tokens:
+
+```powershell
+Set-Location frontend
+$env:SIV_NO_ENV_FILES = '1'
+npm.cmd ci --no-audit --no-fund
+npm.cmd test
+npm.cmd run lint
+npm.cmd run build
+```
+
+Tests explicitly disable Vite environment-file loading. They use synthetic
+provider/token responses with the real library, session/request failure
+fixtures, rendered React permission/onboarding controls, and a short-lived
+loopback Vite server on a free port serving `/auth/callback`. The server is closed
+afterward; the API proxy target is asserted without calling the development API.
+These checks do not prove live Cognito credentials, managed-login cookies, actual
+browser storage/StrictMode interaction, or an online CI run.
+
+For deliberate manual verification after configuration:
+
+1. Open Status signed out, then sign in from canonical localhost. Verify the
+   query callback is consumed once and leaves no code/state in the address bar.
+2. Check Account's own UUID and only accessible workspaces. With no memberships,
+   verify onboarding; use only explicitly chosen synthetic workspace/member
+   changes. Creating these through the browser deliberately writes that database.
+3. Verify each role: reads for all, creation for administrator/accountant, and
+   membership management only for administrator. Check duplicate/last-admin
+   conflicts. Refresh access after an administrator changes your membership.
+4. Switch workspace while a read/save is pending; verify previous forms/records
+   clear and late responses cannot restore them or redirect you. Check the
+   original workspace before retrying an uncertain write.
+5. Exercise login denial/Back, callback replay, browser reload, expiry/refresh
+   failure, offline recovery, logout, and another identity signing in. Verify
+   tokens are absent from localStorage/sessionStorage without copying/logging
+   them; only transient PKCE entries may appear during login.
+
+Local Step 4.5 checks on 2026-10-17 passed after a clean offline lockfile install:
+**217 frontend tests**, no failures/skips, ESLint, and TypeScript/Vite production
+build. Build verification disabled all environment-file loading and used only
+synthetic public settings. Documentation syntax and `git diff --check` passed.
+No development API/database or AWS resource was used by these checks.
+
+Real Cognito/browser verification and online GitHub CI remain unobserved here.
+Actual local results and file purposes are recorded in [progress](docs/progress.md).

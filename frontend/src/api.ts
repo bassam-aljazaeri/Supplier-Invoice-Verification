@@ -2,7 +2,7 @@ import type { DeliveryParams, DeliveryReceipt, DeliveryReceiptCreate, DeliveryRe
 import { isUuid, MONEY_MAX, PRICE_MAX, QUANTITY_MAX, validDate, validDecimal, validateDelivery, validateInvoice, validateOrder, validateSupplier } from './validation.ts'
 import { DEFAULT_PAGE, validPage } from './navigation.ts'
 
-export type FailureKind = 'validation' | 'conflict' | 'missing' | 'unavailable' | 'server' | 'network' | 'timeout' | 'cancelled' | 'invalid-response'
+export type FailureKind = 'unauthorized' | 'forbidden' | 'validation' | 'conflict' | 'missing' | 'unavailable' | 'server' | 'network' | 'timeout' | 'cancelled' | 'invalid-response'
 export class ApiFailure extends Error {
   kind: FailureKind
   details: ErrorDetail[]
@@ -20,6 +20,21 @@ export class ApiFailure extends Error {
 }
 
 export type RequestOptions = { signal?: AbortSignal; timeoutMs?: number }
+export type PrivateContext = {
+  workspaceId: string | null
+  accessToken: () => Promise<string>
+  onFailure: (status: 401 | 403) => void
+}
+let context: (PrivateContext & { controller: AbortController; writes: number; uncertain: boolean }) | null = null
+let contextVersion = 0
+export const privateContextVersion = () => contextVersion
+export function configurePrivateRequests(next: PrivateContext | null) {
+  const previous = context
+  context = next ? { ...next, controller: new AbortController(), writes: 0, uncertain: false } : null
+  contextVersion++
+  previous?.controller.abort()
+  return previous && (previous.writes > 0 || previous.uncertain) ? { workspaceId: previous.workspaceId } : null
+}
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const nullableText = (value: unknown) => value === null || typeof value === 'string'
 const recordFields = (value: Record<string, unknown>) => isUuid(value.id) && isUuid(value.workspace_id) && typeof value.created_at === 'string'
@@ -64,20 +79,25 @@ function pageOf<T>(isItem: (item: unknown) => item is T) {
 }
 
 function responseFailure(status: number, body: unknown, post: boolean) {
-  const kinds: Record<number, FailureKind> = { 422: 'validation', 404: 'missing', 409: 'conflict', 503: 'unavailable' }
-  const messages: Record<number, string> = { 422: 'Some fields are invalid.', 404: 'The record or reference was not found.', 409: 'This identifier is already in use.', 503: 'The service is temporarily unavailable.' }
+  const kinds: Record<number, FailureKind> = { 401: 'unauthorized', 403: 'forbidden', 422: 'validation', 404: 'missing', 409: 'conflict', 503: 'unavailable' }
+  const messages: Record<number, string> = { 401: 'Your session has ended. Sign in again.', 403: 'Your current permissions do not allow this request.', 422: 'Some fields are invalid.', 404: 'The record or reference was not found.', 409: 'This identifier is already in use.', 503: 'The service is temporarily unavailable.' }
   const kind = kinds[status] ?? 'server'
-  const codes: Record<number, string> = { 422: 'validation_error', 404: 'not_found', 409: 'conflict', 503: 'service_unavailable', 500: 'internal_error' }
+  const codes: Record<number, string> = { 401: 'unauthorized', 403: 'forbidden', 422: 'validation_error', 404: 'not_found', 409: 'conflict', 503: 'service_unavailable', 500: 'internal_error' }
   const error = object(body) && object(body.error) ? body.error : null
   const envelope = error && typeof codes[status] === 'string' && error.code === codes[status] && typeof error.message === 'string' && Array.isArray(error.details) && error.details.every((detail) => object(detail) && typeof detail.field === 'string' && typeof detail.message === 'string')
-  return new ApiFailure(kind, envelope ? error.message as string : messages[status] ?? 'The server could not complete the request.', envelope ? error.details as ErrorDetail[] : [], status, post && !envelope && status >= 500)
+  return new ApiFailure(kind, status === 401 || status === 403 ? messages[status] : envelope ? error.message as string : messages[status] ?? 'The server could not complete the request.', envelope ? error.details as ErrorDetail[] : [], status, post && !envelope && status >= 500)
 }
 
-async function request<T>(path: string, isValue: (value: unknown) => value is T, options: RequestOptions, payload?: unknown): Promise<T> {
-  const post = payload !== undefined
+export async function privateRequest<T>(path: string, isValue: (value: unknown) => value is T, options: RequestOptions, payload?: unknown, mode: 'business' | 'account' = 'business', method = payload === undefined ? 'GET' : 'POST'): Promise<T> {
+  const authority = context
+  if (!authority) throw new ApiFailure('unauthorized', 'Sign in before requesting private records.', [], 401)
+  if (mode === 'business' && !isUuid(authority.workspaceId)) throw new ApiFailure('forbidden', 'Choose an accessible workspace first.', [], 403)
+  if (!path.startsWith('/') || path.startsWith('//') || /[\\\r\n]/.test(path)) throw new ApiFailure('validation', 'Invalid API path.')
+  const post = method !== 'GET'
   const timeout = new AbortController()
-  const signal = options.signal ? AbortSignal.any([timeout.signal, options.signal]) : timeout.signal
+  const signal = AbortSignal.any([timeout.signal, authority.controller.signal, ...(options.signal ? [options.signal] : [])])
   let dispatched = false
+  let countedWrite = false
   const timer = setTimeout(() => timeout.abort(new DOMException('Request timed out', 'TimeoutError')), options.timeoutMs ?? 5000)
   let abortListener: () => void = () => {}
   const interrupted = new Promise<never>((resolve, reject) => {
@@ -88,33 +108,53 @@ async function request<T>(path: string, isValue: (value: unknown) => value is T,
   try {
     signal.throwIfAborted()
     const operation = (async () => {
+      const token = await authority.accessToken()
+      signal.throwIfAborted()
+      if (context !== authority) throw new DOMException('Obsolete request', 'AbortError')
+      if (!token) throw new ApiFailure('unauthorized', 'Sign in again.', [], 401)
       dispatched = true
+      if (post) { authority.writes++; countedWrite = true }
       const response = await fetch(`/api${path}`, {
-        method: post ? 'POST' : 'GET', headers: { Accept: 'application/json', ...(post ? { 'Content-Type': 'application/json' } : {}) },
-        cache: 'no-store', signal, ...(post ? { body: JSON.stringify(payload) } : {}),
+        method, headers: { Accept: 'application/json', Authorization: `Bearer ${token}`, ...(mode === 'business' ? { 'X-Workspace-ID': authority.workspaceId! } : {}), ...(payload !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+        cache: 'no-store', credentials: 'omit', redirect: 'error', signal, ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
       })
+      signal.throwIfAborted()
+      if (method === 'DELETE' && response.status === 204) return undefined as T
       let body: unknown
       try { body = await response.json() } catch {
         if (!response.ok) throw responseFailure(response.status, null, post)
         throw new ApiFailure('invalid-response', 'The response could not be read.', [], response.status, post)
       }
       if (!response.ok) throw responseFailure(response.status, body, post)
-      if (response.status !== (post ? 201 : 200) || !isValue(body)) throw new ApiFailure('invalid-response', 'The server returned an unexpected record format.', [], response.status, post)
+      signal.throwIfAborted()
+      const expected = method === 'POST' ? 201 : 200
+      const belongs = mode !== 'business' || (object(body) && (Array.isArray(body.items) ? body.items.every((item) => object(item) && item.workspace_id === authority.workspaceId) : body.workspace_id === authority.workspaceId))
+      if (response.status !== expected || !isValue(body) || !belongs) throw new ApiFailure('invalid-response', 'The server returned an unexpected record format.', [], response.status, post)
       return body
     })()
     return await Promise.race([operation, interrupted])
   } catch (error) {
+    if (error instanceof ApiFailure && (error.status === 401 || error.status === 403)) {
+      if (countedWrite) { authority.writes--; countedWrite = false }
+      if (context === authority && !authority.controller.signal.aborted) authority.onFailure(error.status)
+      throw error
+    }
     if (signal.aborted) {
+      if (post && dispatched) authority.uncertain = true
       const timedOut = signal.reason instanceof DOMException && signal.reason.name === 'TimeoutError'
       throw new ApiFailure(timedOut ? 'timeout' : 'cancelled', timedOut ? 'The request timed out.' : 'The request was interrupted.', [], undefined, post && dispatched)
     }
-    if (error instanceof ApiFailure) throw error
+    if (error instanceof ApiFailure) { if (error.uncertainWrite) authority.uncertain = true; throw error }
+    if (post && dispatched) authority.uncertain = true
     throw new ApiFailure('network', 'Could not reach the service. Check your connection and service status.', [], undefined, post && dispatched)
   } finally {
     clearTimeout(timer)
     signal.removeEventListener('abort', abortListener)
+    if (countedWrite) authority.writes--
   }
 }
+
+const request = privateRequest
 
 function queryFor(page: PageParams) {
   if (!validPage(page)) throw new ApiFailure('validation', 'Invalid page limits.')

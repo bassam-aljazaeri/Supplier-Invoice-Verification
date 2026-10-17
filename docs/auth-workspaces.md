@@ -20,10 +20,20 @@ operations are implemented. They use the existing Step 4.3 schema and locking
 services; no new migration is needed. API startup now requires
 `COGNITO_REGION`, `COGNITO_USER_POOL_ID`, and `COGNITO_APP_CLIENT_ID`. Generated
 signatures and guarded PostgreSQL/HTTP checks verify the backend without AWS.
-The browser flow in section 8 remains Step 4.5 work; current business pages
-cannot yet supply credentials. Historical baseline statements below describe
+At that checkpoint the browser flow in section 8 remained Step 4.5 work and
+business pages could not yet supply credentials. Historical baseline statements below describe
 the Step 4.1 inspection, not the current protected backend. Actual checks are
 recorded in `docs/progress.md`.
+
+Step 4.5 update: browser PKCE login/callback, memory token lifecycle, account and
+workspace selection/creation, administrator membership management, and protected
+business requests are implemented. This request names the public settings
+`VITE_COGNITO_AUTHORITY`, `VITE_COGNITO_CLIENT_ID`, `VITE_COGNITO_DOMAIN`,
+`VITE_AUTH_CALLBACK_URL`, and `VITE_AUTH_LOGOUT_URL`; these supersede the earlier
+draft's issuer/redirect/logout names. No backend behavior or schema changed.
+Generated protocol responses, lifecycle/request tests, rendered role controls,
+and local loopback HTTP checks are separate from real Cognito/browser proof,
+which remains a manual verification task.
 
 ## 1. Inspected baseline and scope decisions
 
@@ -557,17 +567,17 @@ under a newly selected workspace by a late continuation.
 
 ## 9. Required configuration and startup validation
 
-These are proposed setting names, not values read from any local environment
+These are the Step 4.5 setting names, not values read from any local environment
 file. All browser `VITE_` settings are public build-time configuration. No secret
 belongs in them. Do not add actual environment files in Step 4.1.
 
 | Public frontend setting | Meaning and validation |
 | --- | --- |
-| `VITE_COGNITO_ISSUER` | Exact HTTPS Cognito user-pool issuer, also the OIDC authority; no query/fragment, credentials, or trailing slash. |
+| `VITE_COGNITO_AUTHORITY` | Exact original regional HTTPS Cognito user-pool issuer, also the OIDC authority; no query/fragment, credentials, or trailing slash. Matches the backend-derived issuer. |
 | `VITE_COGNITO_CLIENT_ID` | Nonblank public browser app client ID; matches backend and the configured pool/client. No client secret. |
 | `VITE_COGNITO_DOMAIN` | Controlled HTTPS managed-login origin, distinct from the issuer; used for Cognito logout. No path/query/fragment/credentials. |
-| `VITE_AUTH_REDIRECT_URI` | Exact local callback above; deployed builds require a separately approved HTTPS callback on the application origin. |
-| `VITE_AUTH_LOGOUT_URI` | Exact local logout return above; deployed builds require a separately approved HTTPS return on the same application origin. |
+| `VITE_AUTH_CALLBACK_URL` | Exact local callback above. Step 4.5 supports only the reviewed localhost origin; deployment requires a later approved configuration contract. |
+| `VITE_AUTH_LOGOUT_URL` | Exact local logout return above, under the same local-only contract. |
 
 Keep the same-origin `/api` prefix rather than adding an arbitrary token-bearing
 API URL setting. Code constants define code/query/PKCE, scope, storage, and
@@ -605,8 +615,9 @@ signatures and resolves database permissions.
 ## 10. Isolated verification and disposable HTTP checks
 
 This was the later test plan; none of these runtime checks ran in Step 4.1.
-Backend coverage is implemented in Steps 4.3/4.4; the frontend/browser row remains
-future work. Consult progress for actual results and remaining limits.
+Backend coverage is implemented in Steps 4.3/4.4; Step 4.5 implements frontend
+helper/protocol/rendering coverage. Real browser/Cognito checks remain manual.
+Consult progress for actual results and remaining limits.
 
 | Test area | Required evidence |
 | --- | --- |
@@ -678,8 +689,8 @@ Do not obtain Cognito tokens or provision a real pool in a workflow job.
 
 ## 11. Planned files and rollout order
 
-Step 4.1 created none of these implementation files. Backend rows now reflect
-Steps 4.3/4.4; frontend rows remain planned for Step 4.5.
+Step 4.1 created none of these implementation files. Backend rows reflect
+Steps 4.3/4.4; Step 4.5 frontend paths are recorded below.
 
 | Implementation file(s) | Purpose |
 | --- | --- |
@@ -692,9 +703,9 @@ Steps 4.3/4.4; frontend rows remain planned for Step 4.5.
 | `backend/app/bootstrap_membership.py`, `backend/app/cognito.py` | Implemented in Step 4.3: explicit local grant and trusted region/pool issuer derivation. |
 | `backend/tests/auth_helpers.py`, `test_auth.py`, `test_workspace_api.py`, `test_authorization.py`, `test_membership_persistence.py`, `test_bootstrap_membership.py`, `run_http_api.py` | Generated keys, signature/permission/atomicity/concurrency/operator checks, and separate HTTP-server harness. |
 | `backend/scripts/check_auth.py` | Guarded signed HTTP test credentials, explicit registration/bootstrap, and access-negative checks shared with the demo checker. Key preparation is in the test harness. |
-| `frontend/src/auth.ts`, `authContext.tsx`, `authTypes.ts` | Library configuration, callback/renewal/logout lifecycle, session-generation guards, and typed caller/workspace state. |
-| `frontend/src/components/WorkspaceSelector.tsx`, `pages/AccountPage.tsx`, `pages/WorkspaceNewPage.tsx`, `pages/MembershipsPage.tsx` | Own-ID display, workspace choice/creation, and administrator member management. |
-| `frontend/tests/auth.test.mjs`, `workspaces.test.mjs` | Auth/storage/lifecycle/request-scope and workspace/role UI helper checks using the existing Node runner. |
+| `frontend/src/auth.ts`, `authConfig.ts`, `authRuntime.ts`, `authContext.tsx`, `authTypes.ts`, `session.ts`, `accountApi.ts` | Library/configuration adapter, bootstrap before React, callback/renewal/logout lifecycle, generation guards, account requests and typed workspace state. |
+| `frontend/src/components/WorkspaceSelector.tsx`, `pages/SignInPage.tsx`, `pages/AccountPage.tsx`, `pages/WorkspaceNewPage.tsx`, `pages/MembershipsPage.tsx` | Sign-in/setup guidance, own-ID display, workspace choice/creation, and administrator member management. |
+| `frontend/tests/auth.test.mjs`, `workspaces.test.mjs`, `ui.test.mjs`, `auth-fixtures.mjs` | Library protocol, storage/lifecycle/request/context, rendered role/onboarding controls, and actual loopback SPA/callback checks using the existing Node runner and Vite/React tooling. |
 
 Implemented backend integration includes `main.py` (factory and production
 entrypoint), dependencies, shared route authorization/error handling,
@@ -702,11 +713,11 @@ schemas/wrapper, fixture/schema/OpenAPI/business/seed/checker tests, and
 `check_demo.py`/HTTP request helper. All four existing business routers receive
 authorization through their shared route class and dependencies; their source
 and scoped business services need no changes. Seeds keep their no-grants semantics.
-PyJWT with cryptography is locked in the backend manifest/lockfile. Add
-`oidc-client-ts` to the frontend manifest/lockfile in Step 4.5 without unrelated upgrades.
-Frontend App/navigation/API/types/hooks need auth/workspace integration; retain
-the independent status module. Update README/demo setup instructions and public
-setting documentation for browser integration later. Compose now passes the
+PyJWT with cryptography is locked in the backend manifest/lockfile; Step 4.5
+locks `oidc-client-ts` without unrelated upgrades. Frontend App/navigation/API/hooks
+now integrate authentication/workspaces while retaining the independent status
+module. README and public browser-setting instructions describe current setup.
+Compose passes the
 required backend settings; only the CI override selects the disposable harness
 and its key artifact handling. Both check orchestration paths and image
 packaging are updated. These changes do not authorize reading or modifying
@@ -755,5 +766,5 @@ Step 4.1 ended with documentation. Step 4.3 added persistence, its migration and
 internal services, region/pool configuration, the operator command, and tests.
 Step 4.4 adds backend authentication/authorization, protected APIs, locked token
 dependencies, and authenticated disposable checks. Browser login/integration
-remains Step 4.5 work. No milestone is claimed complete beyond the separately
-requested backend checkpoint.
+is implemented in Step 4.5. Real Cognito/browser verification remains separate;
+no approval, upload, extraction, export, deployment, or later milestone work is claimed.

@@ -23,6 +23,8 @@ test('checks health through the frontend proxy path without cached results', asy
   t.mock.method(globalThis, 'fetch', async (path, options) => {
     assert.equal(path, '/api/health')
     assert.equal(options.headers.Accept, 'application/json')
+    assert.equal(options.headers.Authorization, undefined)
+    assert.equal(options.headers['X-Workspace-ID'], undefined)
     assert.equal(options.cache, 'no-store')
     assert.ok(options.signal instanceof AbortSignal)
     return json({ status: 'ok' })
@@ -31,8 +33,10 @@ test('checks health through the frontend proxy path without cached results', asy
 })
 
 test('checks each dependency through the readiness proxy path', async (t) => {
-  t.mock.method(globalThis, 'fetch', async (path) => {
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
     assert.equal(path, '/api/ready')
+    assert.equal(options.headers.Authorization, undefined)
+    assert.equal(options.headers['X-Workspace-ID'], undefined)
     return json(healthyDependencies)
   })
   assert.deepEqual(await getReadinessStatus(), { database: 'ok', redis: 'ok' })

@@ -4,7 +4,7 @@ import { isUuid } from './validation.ts'
 export const DEFAULT_PAGE: PageParams = { limit: 20, offset: 0 }
 export const MAX_OFFSET = 10000
 export type Route =
-  | { kind: 'status' | 'supplier-new' | 'order-new' | 'delivery-new' | 'invoice-new' | 'not-found' }
+  | { kind: 'status' | 'signin' | 'account' | 'workspace-new' | 'memberships' | 'supplier-new' | 'order-new' | 'delivery-new' | 'invoice-new' | 'not-found' }
   | { kind: 'supplier-list'; page: PageParams }
   | { kind: 'supplier-detail'; id: string; page: PageParams }
   | { kind: 'order-list'; page: OrderParams }
@@ -23,6 +23,8 @@ export function parseHash(hash: string): Route {
   const [path, search = '', ...rest] = hash.slice(1).split('?')
   if (!hash.startsWith('#/') || rest.length) return { kind: 'not-found' }
   const query = new URLSearchParams(search)
+  const accountRoutes = { '/signin': 'signin', '/account': 'account', '/workspaces/new': 'workspace-new', '/memberships': 'memberships' } as const
+  if (path in accountRoutes) return query.size ? { kind: 'not-found' } : { kind: accountRoutes[path as keyof typeof accountRoutes] }
   if (['/status', '/suppliers/new', '/purchase-orders/new', '/deliveries/new', '/invoices/new'].includes(path)) {
     if (query.size) return { kind: 'not-found' }
     return { kind: path === '/status' ? 'status' : path === '/suppliers/new' ? 'supplier-new' : path === '/purchase-orders/new' ? 'order-new' : path === '/deliveries/new' ? 'delivery-new' : 'invoice-new' }
@@ -77,4 +79,9 @@ export function subscribeHashChange(listener: () => void, host: HashHost = windo
 
 export function navigate(hash: string) {
   window.location.hash = hash
+}
+
+export function safeReturnHash(value: unknown) {
+  return typeof value === 'string' && value.startsWith('#/') && !/[\\\r\n]/.test(value) && value.length <= 1024
+    && !['not-found', 'signin'].includes(parseHash(value).kind) ? value : '#/account'
 }
