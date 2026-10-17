@@ -1,7 +1,7 @@
 # Progress
 
-Current milestone: 3 - Manual business records (implementation and validation complete)
-Current task: Merge pull request #2 and synchronize local main
+Current milestone: 4 - Authentication and workspace authorization (design documented; implementation pending)
+Current task: Step 4.1 complete - authentication/authorization implementation contract documented
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -27,6 +27,7 @@ Completed:
 - Completed Step 3.5A website navigation, supplier/purchase-order pages, and frontend helper verification
 - Completed Step 3.5B delivery-record/draft-invoice website pages, connected details, and frontend helper verification
 - Completed Step 3.6 repeatable fictional demo seeding and disposable API persistence verification
+- Completed Step 4.1 repository inspection and authentication/workspace authorization design in `docs/auth-workspaces.md`
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -385,8 +386,38 @@ Step 3 final verification:
 - Authentication, AI extraction, automatic discrepancy detection, and approval remain later milestones.
 - User verified repeated development seeding and the linked PO-DEMO-001, DR-DEMO-001, and INV-DEMO-001 browser demonstration.
 
-Next task:
+Previous Milestone 3 handoff (historical; remote merge/local synchronization not verified in Step 4.1):
 - Merge pull request #2 after the latest checks pass, then synchronize local main.
 - Review Milestone 4 skills and scope before implementation.
 
-Blockers: None recorded.
+Step 4.1 documentation work (2026-10-17; Windows host PowerShell):
+- Read `AGENTS.md`, `docs/scope.md`, this progress record, and `docs/manual-workflow.md`; inspected backend sessions, models/migration, routers/errors/services, the fixed-workspace dependency, both seed commands, frontend navigation/request lifecycle, test fixtures, disposable schema/HTTP checkers, Docker/Compose configuration, CI, and dependency manifests.
+- Added `docs/auth-workspaces.md` as the later implementation contract: Cognito public client, code flow with PKCE using oidc-client-ts, PyJWT/cryptography verification, exact verified issuer/subject identity, PostgreSQL users/memberships, role matrix, endpoint/error contracts, concurrency, browser storage/lifecycle, settings, tests, planned files, and rollout order.
+- Defined additive revision `0002_auth_workspaces` after `0001_manual_records`; existing local-demo records, IDs, timestamps, decimal rules, and composite workspace ownership stay in place. No migration file was created or applied.
+- Recorded source links to the official Cognito, oidc-client-ts, and PyJWT documentation after checking their provider/verification/storage behavior. These references support a design, not evidence of a working login.
+
+Step 4.1 material decisions and integration conflicts:
+- Replace the temporary fixed-demo dependency with membership verification on every business request; selection uses untrusted `X-Workspace-ID`. All roles read, administrators/accountants create, and only administrators manage memberships. Approval actions and designation remain deferred.
+- `/me` registers only the verified caller's application-user row and returns their own ID even with no memberships. Subsequent workspace/membership operations use that application ID, never email. Workspace creation and its first administrator commit atomically; local removal retains an inactive identity tombstone.
+- Missing/invalid credentials are 401 with a bearer challenge; inaccessible workspace selections and insufficient roles are 403; records/references outside an authorized workspace are 404; missing/malformed selections are 422. Explicitly reject workspace-selection headers on identity/workspace-management routes. Preserve sanitized errors and public health/readiness bodies.
+- Serialize membership changes with workspace-row locks, reread caller authority after waiting, and reject loss of the last active administrator. Specify separate-connection concurrency tests and failure recovery.
+- A first-demo-administrator CLI requires the configured verified issuer and copied subject from an already registered user. It grants no startup/email/public bootstrap access; current seeds continue to grant nothing.
+- Current hash routing and numeric-host browsing need a dedicated query callback at `http://localhost:5173/auth/callback` and canonical localhost login origin. The logout return is `http://localhost:5173/`. Tokens remain in memory; only transient correlation state may use sessionStorage. Reload may require a new login redirect and loses unsaved drafts.
+- Current TestClient fixtures and live demo HTTP reads are unauthenticated. Plan generated signing keys, the real verifier, database memberships, and a separate disposable HTTP-server harness without any production bypass or AWS calls. Preserve repeated seeding, live snapshots across restart, and public dependency outage/recovery checks.
+- The previous PR #2 merge/synchronize task is retained above as historical handoff, not marked complete or remotely verified. The current request authorizes this documentation checkpoint; no Git integration action was taken. The temporary demo-access/no-frontend-dependency assumptions in the Step 3 blueprint are explicitly superseded; first-release scope is unchanged.
+
+Step 4.1 checks actually performed:
+- Initial Git status showed only pre-existing untracked `Microsoft/`.
+- Documentation coverage check passed for ten groups covering the requested identity, schema, APIs, roles, error/selection rules, concurrency/removal, operator/data-retention, public/no-bypass, browser/lifecycle, and offline-test/settings/rollout contracts. All eleven numbered sections are present and ordered.
+- Both changed documents passed trailing-whitespace, final-newline, and balanced-code-fence checks. The one illustrative PowerShell block parsed successfully without execution; source-link URL syntax passed.
+- `git diff --check` passed; final tracked/untracked change-scope review is limited to the two requested documentation files plus pre-existing `Microsoft/`.
+
+Step 4.1 validation limits and preserved boundaries:
+- No application tests, frontend lint/build, Docker/Compose/checker commands, migrations, seeds, operator grants, API/SQL requests, browser login, AWS account actions, or GitHub CI were run. Historical Milestone 3 passes above were not rerun for Step 4.1.
+- No application code, dependency/lockfile, infrastructure, applied migration, or database data was changed. Actual local environment files were not read, created, modified, or printed. `Microsoft/` remains untouched. No commit or push was performed.
+- Authentication, new models/migration/endpoints, dependencies/settings, browser flows, CLI, and test/checker changes are planned only; Step 4.1 stops after documentation.
+
+Next task:
+- Implement only the next separately requested Milestone 4 task using `docs/auth-workspaces.md`; no implementation started in Step 4.1.
+
+Blockers: None for the documentation checkpoint. Real Cognito setup and runtime verification remain future work.
