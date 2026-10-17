@@ -1,7 +1,7 @@
 # Progress
 
-Current milestone: 4 - Authentication and workspace authorization (design documented; implementation pending)
-Current task: Step 4.1 complete - authentication/authorization implementation contract documented
+Current milestone: 4 - Authentication and workspace authorization (Step 4.3 persistence complete; authentication pending)
+Current task: Step 4.4 - access-token verification and workspace authorization
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -28,6 +28,7 @@ Completed:
 - Completed Step 3.5B delivery-record/draft-invoice website pages, connected details, and frontend helper verification
 - Completed Step 3.6 repeatable fictional demo seeding and disposable API persistence verification
 - Completed Step 4.1 repository inspection and authentication/workspace authorization design in `docs/auth-workspaces.md`
+- Completed Step 4.3 additive identity/membership persistence, explicit operator bootstrap, and guarded PostgreSQL verification
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -417,7 +418,52 @@ Step 4.1 validation limits and preserved boundaries:
 - No application code, dependency/lockfile, infrastructure, applied migration, or database data was changed. Actual local environment files were not read, created, modified, or printed. `Microsoft/` remains untouched. No commit or push was performed.
 - Authentication, new models/migration/endpoints, dependencies/settings, browser flows, CLI, and test/checker changes are planned only; Step 4.1 stops after documentation.
 
-Next task:
-- Implement only the next separately requested Milestone 4 task using `docs/auth-workspaces.md`; no implementation started in Step 4.1.
+Step 4.3 implementation and file purposes (2026-10-17; Windows host PowerShell, Python/Alembic/pytest inside Linux containers):
+- Read `AGENTS.md`, scope, progress, and the authentication contract before editing. Inspected existing models, initial migration, sessions, workspace/demo initialization, isolated PostgreSQL fixtures/schema tests, checker, CI, Compose, Docker packaging, and the tracked settings template. Initial Git status showed only pre-existing untracked `Microsoft/`.
+- Explained every planned file and its purpose before editing, including the additional committed-fixture change before making it.
+- Added `backend/app/models/application_user.py` and `workspace_membership.py`; registered them in `models/__init__.py` and added a read-only workspace membership collection in `models/workspace.py`. Users have exact issuer/subject uniqueness, active status, and UTC creation/update timestamps. Memberships have role checks, restrictive foreign keys, workspace/user uniqueness, and query indexes. All constraints and indexes are named.
+- Added schema-only `backend/migrations/versions/0002_auth_workspaces.py`, following `0001_manual_records`. It creates the two tables and no data. Existing workspace/business tables and the applied initial revision are unchanged.
+- Added `backend/app/cognito.py`: validate `COGNITO_REGION` and matching `COGNITO_USER_POOL_ID`, then derive the original regional issuer without discovery or AWS calls. Added only public identifier placeholders to `.env.example`; passed them through `compose.yaml` with empty defaults, preserving existing API startup. Extended `backend/.dockerignore` so environment files cannot enter the build context.
+- Added `backend/app/services/identity.py`: insert-or-find the exact identity using PostgreSQL conflict handling, without normalization, commit, rollback, or reactivation. Added `services/memberships.py`: trusted add/read/list/change/remove operations, workspace-then-user locking, post-lock refresh, exact role validation, idempotent identical assignments, explicit role-conflict errors, and active last-administrator protection. No public router calls these services.
+- Added `backend/app/bootstrap_membership.py`: explicit required subject/workspace-slug/role arguments, trusted derived issuer, existing workspace required, identity creation if needed, one commit or full rollback, harmless same-role repeat, refusal to replace a different role, and sanitized output/argument failures. No startup/import/seed/public-endpoint invocation was added.
+- Added `backend/tests/test_cognito.py`, `test_membership_persistence.py`, `test_bootstrap_membership.py`, and `test_auth_migration.py` for synthetic configuration, real persistence/constraints/relationships, transaction ownership, rollback/recovery, actual module-command execution, separate-connection lock races, and populated-upgrade preservation.
+- Extended `backend/tests/conftest.py` with a marker-guarded committed fixture whose cleanup deletes only known synthetic workspace/user rows. Existing savepoint fixtures remain intact. Updated `test_postgres_schema.py` for ten tables and the new head, strengthening its empty-database guard. Updated `test_seed_demo.py` to retain its original eight-table fixture checks and explicitly verify no identities/memberships are seeded.
+- Updated README with current scope, configuration, exact PowerShell/Linux-container commands, transaction/concurrency explanations, test results, and limits. Updated `docs/auth-workspaces.md` to record the requested bootstrap/configuration changes and current intermediate behavior. Updated this progress record. Existing checker and CI already collect the new tests and needed no changes.
 
-Blockers: None for the documentation checkpoint. Real Cognito setup and runtime verification remain future work.
+Step 4.3 decisions and differences from Step 4.1:
+- The requested command is `python -m app.bootstrap_membership --subject SUBJECT --workspace-slug local-demo --role administrator`. Unlike the earlier plan, it may create the identity before any login or `/me`, may explicitly add further users/roles, selects an existing workspace by exact slug, and accepts no issuer override. The operator must obtain the intended subject from the chosen Cognito pool through a trusted channel; the command deliberately makes no AWS call to confirm it.
+- Region/pool configuration replaces the earlier direct backend issuer setting for derivation. The current profile is the original regional Cognito issuer; updated/multi-region issuer profiles need a later reviewed configuration contract. No client secret, AWS credential, client ID setting, token library, or frontend setting was introduced.
+- Persistence helpers do not own transaction completion or HTTP authorization. The bootstrap wrapper owns one commit/rollback. Future routers must verify the caller after acquiring the workspace lock; token verification and protected routes are deliberately not implemented in this checkpoint.
+- A workspace row lock serializes every membership mutation. READ COMMITTED and fresh post-lock queries see competing commits before counting active administrators. Concurrent removal/demotion cannot remove the final active administrator. A three-second lock timeout requires rollback; a later operation can recover. Direct SQL is outside this service protocol, and no user-deactivation tool is added.
+- Existing local-demo IDs, records, timestamps, exact decimal values, business rules, fixed-workspace request dependency, API errors/OpenAPI, seeds, health/readiness bodies, and frontend behavior remain unchanged. Membership persistence does not yet enforce API permissions. This completes only the explicitly requested Step 4.3; no other Milestone 4 step is claimed complete.
+
+Step 4.3 checks actually performed:
+- `.\scripts\check-backend.ps1` passed on its first run, exit code 0, using disposable project `supplier-invoice-verification-check-e8389591bcc64a6f8bbeda6b9f192710`. Compose configuration, locked image build, bounded startup, guarded database preparation, migration upgrade/current/head verification all passed; revision is `0002_auth_workspaces (head)` in that disposable database.
+- Opted-in Linux-container pytest passed: 593 tests, no failures or skips (162 ordinary checks and 431 PostgreSQL integration cases). Named schema/metadata agreement, identity uniqueness and concurrent registration, membership FKs/relationships/roles, CLI repeat/conflict/missing workspace/inactive identity, transaction ownership, rollback/commit-failure recovery, and all retained tests passed.
+- Separate-connection tests observed actual PostgreSQL lock waits before committing the first change. Concurrent remove/remove, demote/demote, remove/demote, and demote/remove retained one active administrator; competing bootstrap role assignments preserved the first role. Lock timeout/rollback/later success also passed.
+- The actual `python -m app.bootstrap_membership` subprocess ran in the guarded test database with synthetic pool/subject values: first success persisted, identical repeat preserved the full access snapshot, and a different role exited nonzero without changes. No live AWS account, key, credential, or request was used.
+- A guarded populated migration test downgraded only the disposable schema to `0001_manual_records`, inserted the full synthetic eight-table workflow plus another workspace/supplier, upgraded twice, and compared every existing row/ID/timestamp/value unchanged. New user/membership tables remained empty. It deleted only its own known rows and restored head; the retained guarded full downgrade/upgrade test also passed.
+- Existing workspace initialization twice, full demo seeding twice, live HTTP detail/list/filter snapshots, API/PostgreSQL restart with volume retained, and identical post-restart records all passed. Public health/readiness returned 200 before migrations, health stayed 200 while readiness returned 503 with both dependencies stopped, and readiness recovered to 200 after restart.
+- Ordinary pytest in the final built image with Docker networking disabled passed: 162 tests, 431 explicit PostgreSQL opt-in skips, exit code 0. Both pytest runs reported the existing unsuppressed Starlette TestClient/httpx deprecation warning; no unrelated dependency change was made.
+- Verified the disposable project's containers, network, volume, and generated synthetic settings file were removed. Before/after Docker metadata showed the original development API still running and PostgreSQL/Redis healthy. No development API/SQL/migration/bootstrap operation was performed.
+- All 24 PowerShell blocks across README/authentication documentation parsed without execution; checker PowerShell syntax passed. `git diff --check`, documentation/new-file whitespace checks, and final change-scope review passed. Git comparison confirmed `0001_manual_records.py`, sessions, main/routers, business services, seed commands, dependencies/lockfiles, Dockerfile, CI override, checker/CI, complete frontend, instructions, scope, and manual blueprint unchanged.
+
+Step 4.3 user-run next commands and remaining limits:
+- Set `$env:COGNITO_REGION = 'YOUR_REGION'` and `$env:COGNITO_USER_POOL_ID = 'YOUR_USER_POOL_ID'` in the same Windows PowerShell session, replacing placeholders with the intended existing pool. Copy that person's real Cognito subject separately; use no email lookup. No Cognito settings are needed for disposable tests or current API startup.
+- From the project root in Windows PowerShell: `docker compose up --build -d api`, then `docker compose exec -T api alembic upgrade head`, then `docker compose exec -T api alembic current`. These are deliberate user-run development writes, not commands run by Codex. Expect `0002_auth_workspaces (head)`; retain the existing volume.
+- Once `local-demo` exists, run `docker compose exec -T api python -m app.bootstrap_membership --subject 'COPIED_COGNITO_SUB' --workspace-slug local-demo --role administrator`; repeat the same command for the harmless-repeat check. If the workspace has never been initialized, explicitly run `docker compose exec -T api python -m app.seed_workspace` first. Python/Alembic run inside the Linux API container. README has the complete copyable command blocks and conflict behavior.
+- Repeat isolated verification with `.\scripts\check-backend.ps1`. Online GitHub CI has not run on this uncommitted revision; frontend tests/lint/build were not repeated because frontend files are unchanged. No browser or real Cognito login was exercised.
+- Actual local environment files were not read, created, modified, or printed. Only the explicitly authorized tracked `.env.example` template changed; the retained checker generated and removed its own synthetic disposable settings file. `Microsoft/` remains untouched. No commit or push was performed, and the development database was not migrated, seeded, reset, or granted memberships by Codex.
+- Token verification, protected business routes, public membership/workspace APIs, frontend login, approval, and new AWS resources remain deferred. Current unauthenticated API behavior is preserved as requested; the existing dependency warning and unverified online CI remain recorded limits.
+
+Step 4.3 user verification:
+- Disposable backend checker passed with exit code 0.
+- Development migration applied: 0002_auth_workspaces (head).
+- Explicit administrator bootstrap succeeded for local-demo.
+- Repeated bootstrap returned the same application-user ID and membership.
+- API authentication and protected routes remain deferred to Step 4.4.
+
+Next task:
+- Work only on the next separately requested Milestone 4 task; stop after Step 4.3 here.
+
+Blockers: No Step 4.3 blocker. User configuration and a deliberate local migration/bootstrap remain optional next operator actions; authentication implementation is future work.

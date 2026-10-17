@@ -5,12 +5,12 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, event, select, text, update
+from sqlalchemy import delete, event, func, select, text, update
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import seed_demo
-from app.models import Base, DeliveryReceipt, DeliveryReceiptLine, Invoice, InvoiceLine, PurchaseOrder, PurchaseOrderLine, Supplier, Workspace
+from app.models import ApplicationUser, Base, DeliveryReceipt, DeliveryReceiptLine, Invoice, InvoiceLine, PurchaseOrder, PurchaseOrderLine, Supplier, Workspace, WorkspaceMembership
 from app.schemas.delivery_receipt import DeliveryReceiptCreate
 from app.schemas.invoice import InvoiceCreate
 from app.schemas.purchase_order import PurchaseOrderCreate
@@ -28,7 +28,9 @@ PRIVATE = "synthetic-private-conflict-value"
 
 
 def snapshot(session):
-    return {table.name: session.execute(select(table).order_by(table.c.id)).all() for table in Base.metadata.sorted_tables}
+    # This fixture owns the original eight business/workspace tables. Explicit
+    # assertions below check that it grants no identities or memberships.
+    return {table.name: session.execute(select(table).order_by(table.c.id)).all() for table in Base.metadata.sorted_tables if table.name not in {"application_users", "workspace_memberships"}}
 
 
 def supplier_input(code="DEMO-OFFICE-001"):
@@ -53,6 +55,8 @@ def test_fresh_seed_links_exact_fixture_with_one_commit(schema_session, api_clie
     initialize_demo(schema_session)
     assert len(commits) == 1
     assert all(len(rows) == 1 for rows in snapshot(schema_session).values())
+    for model in (ApplicationUser, WorkspaceMembership):
+        assert schema_session.scalar(select(func.count()).select_from(model)) == 0
     assert str(DEMO_SUPPLIER_ID) == "10000000-0000-4000-8000-000000000001"
     assert str(DEMO_ORDER_ID) == "20000000-0000-4000-8000-000000000001"
     assert str(DEMO_RECEIPT_ID) == "30000000-0000-4000-8000-000000000001"

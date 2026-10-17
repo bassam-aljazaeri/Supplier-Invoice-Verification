@@ -6,8 +6,11 @@ from app.models.supplier import Supplier
 from app.models.purchase_order import PurchaseOrder, PurchaseOrderLine
 from app.models.delivery_receipt import DeliveryReceipt, DeliveryReceiptLine
 from app.models.invoice import Invoice, InvoiceLine
+from app.models.application_user import ApplicationUser
+from app.models.workspace_membership import MembershipRole, WorkspaceMembership
 
 __all__ = [
     "Base", "Workspace", "Supplier", "PurchaseOrder", "PurchaseOrderLine",
     "DeliveryReceipt", "DeliveryReceiptLine", "Invoice", "InvoiceLine",
+    "ApplicationUser", "MembershipRole", "WorkspaceMembership",
 ]

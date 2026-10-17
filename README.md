@@ -9,6 +9,11 @@ fictional demo and disposable persistence verification. This milestone is a
 local manual-record application. Extraction, automatic discrepancy detection,
 authentication, and approval remain later work.
 
+Step 4.3 adds application-user/workspace-membership persistence and an explicit
+local operator bootstrap command. It does not yet protect business routes or
+add login; current API behavior remains unchanged. See
+[the operator instructions](#user-and-membership-persistence-step-43).
+
 For setup and the 10 ordered / 8 delivered / 10 invoiced demonstration, see
 [the demo guide](docs/demo.md) and [the seed instructions below](#repeatable-fictional-demo-step-36).
 
@@ -185,7 +190,7 @@ docker compose exec -T api alembic upgrade head
 docker compose exec -T api alembic current
 ```
 
-Expect revision `0001_manual_records (head)`. Running `upgrade head` again is
+Expect revision `0002_auth_workspaces (head)` after Step 4.3. Running `upgrade head` again is
 harmless. This applies forward schema changes to the development database and
 retains its named volume. No workspace rows are inserted: an empty workspace
 table is expected until the explicit Step 3.3 command below is run. Do not use test cleanup or
@@ -760,7 +765,7 @@ docker compose exec -T api python -m app.seed_demo
 docker compose exec -T api python -m app.seed_demo
 ```
 
-Expect `0001_manual_records (head)` and a successful fictional-demo summary on
+Expect `0002_auth_workspaces (head)` and a successful fictional-demo summary on
 each seed. The seed initializes the fixed workspace if missing; a separate
 `seed_workspace` run is optional. These commands intentionally write your chosen
 local demo database. Codex ran seeding only in the guarded disposable checker,
@@ -832,4 +837,156 @@ existing health/readiness/outage/recovery checks and frontend job.
 The automated repeatability/persistence checks use real PostgreSQL and live HTTP.
 They do not exercise website rendering or browser interactions. Use the demo guide
 for those checks, and record browser and online GitHub results separately in
-[progress](docs/progress.md). No new migration or dependency is required.
+[progress](docs/progress.md). Step 3.6 itself needed no new migration or dependency;
+Step 4.3 adds the following persistence migration.
+
+## User and membership persistence (Step 4.3)
+
+This checkpoint adds `application_users` and `workspace_memberships`, revision
+`0002_auth_workspaces`, internal persistence services, and an explicit local
+operator command. **Business routes still have their existing unauthenticated
+demo behavior.** Assigning a role does not yet restrict API access. Token
+verification, protected routes, `/me`, membership HTTP APIs, frontend login,
+approval actions, and additional AWS resources are outside this checkpoint.
+
+Users have a server UUID, the exact case-sensitive `(issuer, subject)` identity,
+active status, and creation/update timestamps. No email, password, or token is
+stored. Memberships reference an existing workspace and user with restrictive
+foreign keys, a unique workspace/user pair, and exactly one of `administrator`,
+`accountant`, or `approver`. Named constraints and indexes are checked against
+PostgreSQL. The new migration inserts no rows and changes no existing workspace
+or business record. The applied `0001_manual_records` is unchanged.
+
+### Required operator configuration
+
+No Cognito configuration was present before this step. The tracked `.env.example`
+now documents placeholders for `COGNITO_REGION` and `COGNITO_USER_POOL_ID`, and
+Compose passes them to the API container. Empty values preserve current API
+startup; the operator command refuses missing, malformed, or mismatched values
+before opening a database session. No actual environment file is supplied or
+changed by this implementation. You can set the two values in your current
+PowerShell process instead of editing a file.
+
+Use the region and matching pool ID of the intended existing Cognito user pool.
+The issuer is derived as
+`https://cognito-idp.{region}.amazonaws.com/{user_pool_id}` (China uses
+`amazonaws.com.cn`). This supports the original regional issuer profile; updated
+or multi-region issuer profiles need a later reviewed configuration contract.
+There is no `--issuer` override, AWS key, client secret, browser setting, discovery
+request, or AWS call. See [Cognito's issuer/token documentation](https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-tokens-verifying-a-jwt.html).
+
+Copy the intended person's exact `sub` from the selected pool through a trusted
+operator channel, such as that user's Cognito record. It is not their email or
+username. The command deliberately trusts the local operator's supplied subject;
+it does not confirm an AWS account exists, decode a pasted token, or require
+prior application login. If you do not yet have an intended pool and subject,
+leave the operator command for later. Disposable tests need neither.
+
+### Build, migrate, and grant deliberately
+
+These are **Windows host PowerShell commands** from the project root for a
+later user-run update of the chosen local database. Python and Alembic execute
+inside the **Linux API container**. Replace all three uppercase placeholders
+with the intended pool's values before running. The build/recreate is necessary
+to load Compose settings and the migration packaged in the image; it retains
+PostgreSQL's existing volume. Codex has not run these against development.
+
+```powershell
+$env:COGNITO_REGION = 'YOUR_REGION'
+$env:COGNITO_USER_POOL_ID = 'YOUR_USER_POOL_ID'
+docker compose up --build -d api
+docker compose exec -T api alembic upgrade head
+docker compose exec -T api alembic current
+docker compose exec -T api python -m app.bootstrap_membership --subject 'COPIED_COGNITO_SUB' --workspace-slug local-demo --role administrator
+```
+
+Expect `0002_auth_workspaces (head)` and a `Membership ready` result containing
+the application-user UUID, workspace UUID, and role. No subject, credentials,
+token, or connection string is printed. Existing records stay in `local-demo`
+with their current IDs and values. No reset, destructive downgrade, or volume
+removal is needed.
+
+The workspace must already exist. If this is a fresh local setup where it has
+not been initialized, explicitly run this **Windows host PowerShell command**
+(Python runs in the **Linux API container**), then repeat the grant above:
+
+```powershell
+docker compose exec -T api python -m app.seed_workspace
+```
+
+Do not rerun initialization to repair an ID/slug/name conflict; its existing
+insert-or-verify rules still refuse overwriting. Bootstrap itself never seeds,
+creates, renames, or substitutes a workspace. You may explicitly select another
+existing workspace slug; its IDs also stay unchanged.
+
+To prove a harmless repeat, use the same subject, workspace, and role again from
+**Windows host PowerShell** (Python runs in the **Linux API container**):
+
+```powershell
+docker compose exec -T api python -m app.bootstrap_membership --subject 'COPIED_COGNITO_SUB' --workspace-slug local-demo --role administrator
+```
+
+The first successful grant creates the application user if needed and adds the
+membership. A repeat preserves both IDs and timestamps. A different existing
+role exits nonzero instead of silently replacing it. Missing workspace, inactive
+user, invalid input/configuration, or database failure also exits nonzero, with
+no partial identity or grant. It never reactivates a disabled user. The command
+may explicitly add other users/roles, but has no HTTP endpoint and never runs
+through import, startup, migrations, `seed_workspace`, or `seed_demo`.
+
+### Service transactions and concurrent role changes
+
+`services.identity.ensure_application_user` and the functions in
+`services.memberships` never commit or roll back. Their caller owns one
+transaction and must commit success or roll back failure. The CLI's
+`bootstrap_membership` wrapper owns that boundary; its `ensure_bootstrap_membership`
+helper can participate in another caller's transaction. Current API routes do
+not call these services. Future HTTP callers must authenticate and check their
+administrator authority after obtaining the workspace lock.
+
+All membership additions, role changes, and removals lock the existing workspace
+row with `SELECT ... FOR UPDATE`, then lock/reread the target user and membership.
+That row lock makes competing changes wait for each other. READ COMMITTED makes
+the query after waiting see the other transaction's committed result. Services
+require that isolation level and hold locks until the caller commits or rolls
+back. The last active administrator cannot be removed or demoted; an
+administrator in another workspace or an inactive user does not count. A no-op
+role change preserves `updated_at`; a real change updates it. Lock waiting is
+bounded at three seconds and an error requires rollback before recovery.
+Established permissions must be changed through this protocol; direct SQL can
+bypass service rules. No user deactivation/removal tool is introduced here.
+
+### Isolated checks
+
+From **Windows host PowerShell**, run:
+
+```powershell
+.\scripts\check-backend.ps1
+```
+
+The retained checker builds the locked image and runs Alembic/pytest inside
+**Linux containers** using generated disposable settings and its own guarded
+PostgreSQL database/volume. It does not read the actual project environment file
+or migrate development. New tests use synthetic Cognito settings and no AWS
+calls. Most rows roll back through the existing savepoint fixtures; concurrency
+and real module-command tests commit only known synthetic rows and delete only
+their own IDs after repeating the connected disposable marker guard.
+
+Checks cover fresh schema/metadata agreement, populated `0001` upgrade without
+changing existing records, identity uniqueness including concurrent registration,
+relationships/FKs, role validation, bootstrap repeat/conflict/missing workspace,
+atomic rollback and recovery, competing administrator changes on independent
+connections, and lock timeout/recovery. Existing seeding, live HTTP persistence
+across restart, dependency outage/recovery, and disposable cleanup remain in the
+same checker. CI already discovers the new tests; no workflow change or AWS
+account/credentials are required. Exact outcomes and remaining verification are
+recorded in [progress](docs/progress.md).
+
+Local Step 4.3 validation on 2026-10-17 passed: 593 backend tests with PostgreSQL
+opt-in and no skips, plus the live repeated-seed, restart-persistence,
+dependency-outage/recovery, and disposable cleanup checks. A separate image run
+with Docker networking disabled passed 162 tests and skipped 431 integration
+tests with the explicit opt-in reason. Both runs reported the existing
+Starlette/httpx deprecation warning. These local results are not an online
+GitHub CI result; frontend checks were not rerun because frontend files did not
+change.

@@ -70,3 +70,42 @@ def api_client(schema_session):
     finally:
         app.dependency_overrides.clear()
         app.dependency_overrides.update(original_overrides)
+
+
+@pytest.fixture
+def committed_memberships(postgres_engine):
+    """Guarded committed rows for separate-connection races and real CLI checks."""
+    from uuid import uuid4
+
+    from sqlalchemy import delete
+
+    from app.models import ApplicationUser, Workspace, WorkspaceMembership
+    from app.services.identity import ensure_application_user
+    from app.services.memberships import ensure_membership
+
+    token = uuid4().hex
+    records = {
+        "workspace_id": uuid4(), "slug": "membership-check-" + token,
+        "issuer": "https://cognito-idp.eu-west-1.amazonaws.com/eu-west-1_EXAMPLE",
+        "subjects": [f"{token}-{index}" for index in range(3)], "user_ids": [],
+    }
+    try:
+        with Session(postgres_engine, expire_on_commit=False) as session:
+            require_test_marker(session.connection(), os.environ)
+            session.add(Workspace(id=records["workspace_id"], slug=records["slug"], name="Synthetic membership check"))
+            session.flush()
+            for index, subject in enumerate(records["subjects"]):
+                user = ensure_application_user(session, records["issuer"], subject)
+                records["user_ids"].append(user.id)
+                if index < 2:
+                    ensure_membership(session, records["workspace_id"], user.id, "administrator")
+            session.commit()
+        yield records
+    finally:
+        with postgres_engine.begin() as connection:
+            require_test_marker(connection, os.environ)
+            connection.execute(delete(WorkspaceMembership).where(WorkspaceMembership.workspace_id == records["workspace_id"]))
+            connection.execute(delete(Workspace).where(Workspace.id == records["workspace_id"]))
+            connection.execute(delete(ApplicationUser).where(
+                ApplicationUser.issuer == records["issuer"], ApplicationUser.subject.in_(records["subjects"]),
+            ))

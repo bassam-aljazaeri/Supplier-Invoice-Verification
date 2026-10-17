@@ -15,6 +15,10 @@ class Workspace(Record, Base):
     slug: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
 
+    memberships: Mapped[list["WorkspaceMembership"]] = relationship(
+        "WorkspaceMembership", foreign_keys="WorkspaceMembership.workspace_id", viewonly=True,
+    )
+
     suppliers: Mapped[list["Supplier"]] = relationship(
         "Supplier", foreign_keys="Supplier.workspace_id", viewonly=True
     )

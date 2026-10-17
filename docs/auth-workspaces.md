@@ -6,6 +6,14 @@ authentication is implemented. Only this document and `docs/progress.md` change
 in this checkpoint. No application, dependency, infrastructure, migration, or
 database changes are authorized by Step 4.1.
 
+Step 4.3 update: the separately requested persistence checkpoint implements the
+two tables, additive migration, internal transaction/locking services, and the
+explicit `app.bootstrap_membership` operator command. The inspected baseline
+below is historical Step 4.1 evidence. Token verification, `/me`, protected
+routes, public membership APIs, and browser login remain future work. Current
+business requests still use the existing fixed demo workspace. Section 7 and
+the backend configuration below reflect the user's revised operator contract.
+
 ## 1. Inspected baseline and scope decisions
 
 | Inspected area | Current behavior and consequence for implementation |
@@ -158,7 +166,9 @@ database, change existing record IDs, or move records into a new workspace.
 
 Existing fictional and manually entered records stay in `local-demo`, UUID
 `00000000-0000-4000-8000-000000000001`. It initially has zero memberships after
-upgrade and is inaccessible until the operator explicitly grants access. A
+upgrade. Once authorization is implemented, it will be inaccessible until the
+operator explicitly grants access; Step 4.3 preserves current public demo API
+behavior while adding persistence. A
 freshly created workspace also briefly has zero memberships inside its creation
 transaction; it cannot become visible without its first administrator commit.
 The last-administrator rule therefore applies to established membership sets,
@@ -381,44 +391,47 @@ deactivation/membership removal; otherwise an existing access token can remain
 usable until expiry (plus verifier leeway). Cognito explains this distinction in
 [token revocation](https://docs.aws.amazon.com/cognito/latest/developerguide/token-revocation.html).
 
-## 7. Explicit first demo membership and existing data
+## 7. Explicit operator bootstrap and existing data
 
-Plan a local operator-only command `python -m app.grant_demo_membership` with
-required `--issuer` and `--subject`. It uses the existing database connection
-configuration, never an AWS account key or a pasted bearer token. It is not
-invoked by server startup, migrations, `seed_workspace`, or `seed_demo`.
+The Step 4.3 request supersedes the earlier first-demo-only CLI design. Implement
+`python -m app.bootstrap_membership --subject SUBJECT --workspace-slug local-demo
+--role administrator`. It derives the trusted issuer from `COGNITO_REGION` and
+`COGNITO_USER_POOL_ID`; it accepts no issuer override. Copy the intended person's
+actual `sub` from the selected Cognito user pool through a trusted operator
+channel, never an email lookup or unverified token decode. No AWS request is
+made to confirm the supplied subject: this is an explicit local operator grant.
 
-The operator first has the intended person sign in and call `/me`. Using that
-verified response, copy `user.issuer` and `user.subject` and independently check
-the selected Cognito pool/issuer. Do not decode an unverified JWT or identify the
-person by an email search. The command requires the issuer to exactly equal the
-configured trusted Cognito issuer and the identity pair to already exist as an
-active application user; a typo/unknown/disabled subject must fail. The CLI's
-input is trusted only because a local operator deliberately supplies values
-obtained through the verified sign-in, not because a copied string is a token.
+Unlike the Step 4.1 proposal, the command creates the exact application-user
+identity if missing, and does not require prior sign-in or `/me` (not yet
+implemented). It requires an existing workspace selected by exact slug and may
+explicitly add further memberships, including the three supported roles. It
+never creates, renames, resets, or silently substitutes a workspace. An inactive
+identity cannot be reactivated by bootstrap. Repeating the same user/workspace
+and role preserves IDs and timestamps; an existing different role is a conflict,
+not an implicit role change. Normal role changes use the locked service and will
+eventually be exposed only through authorized management APIs.
 
-Illustrative **Windows host PowerShell** invocation for later implementation
-(Python runs inside the **Linux API container**; not executed in Step 4.1):
+Illustrative **Windows host PowerShell** invocation (Python executes inside the
+**Linux API container**; use the real copied subject in a later deliberate run):
 
 ```powershell
-docker compose exec -T api python -m app.grant_demo_membership --issuer 'https://cognito-idp.eu-west-1.amazonaws.com/eu-west-1_EXAMPLE' --subject 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+docker compose exec -T api python -m app.bootstrap_membership --subject 'SUBJECT' --workspace-slug local-demo --role administrator
 ```
 
-The example values are fictional, not a configured pool or account. The command
-must find and lock the exact existing demo UUID/slug/name, refuse a missing or
-conflicting workspace, and resolve the already registered user. If there are no
-memberships, insert that user's administrator membership and commit. Repeating
-for the same active administrator succeeds without changes. If memberships
-already exist and this user is not already an administrator, fail rather than
-add/promote another bootstrap user; the existing administrator uses the normal
-API. A partial failure rolls back. Print only the application-user/workspace IDs
-and outcome, never tokens, credentials, or private connection details.
+The CLI locks the existing workspace before creating the user or membership and
+commits both in one transaction, or rolls back everything. A missing workspace,
+invalid configuration, inactive user, or conflicting role returns a nonzero
+status with a sanitized message. It prints only application-user/workspace IDs,
+the requested role, and the outcome, never tokens, credentials, or connection
+details. The lower-level identity/membership helpers never commit or roll back;
+the CLI transaction owner does. Other callers must own the same boundary.
 
-This leaves existing records in place and grants their first deliberate reader.
-Ordinary membership APIs handle further access. Neither seeds nor a fresh login
-grant demo access. There is no email-based grant, startup grant, or public
-bootstrap endpoint. The command's local database authority is an operator
-capability; it must not be exposed through HTTP or browser controls.
+No startup, import, migration, or seed invokes bootstrap. There is no public
+bootstrap endpoint or email-based grant. Existing data stay in their current
+workspaces. In Step 4.3 these rows prepare future authorization; current API
+behavior is deliberately unchanged. Internal persistence services are trusted
+operations, not authorization checks: future routers must verify caller authority
+after taking the workspace lock. No deactivation tool or public API is added.
 
 ## 8. Browser lifecycle, storage, and navigation
 
@@ -554,17 +567,22 @@ token/logout endpoints against the controlled Cognito domain before use.
 
 | Backend setting | Meaning and validation |
 | --- | --- |
-| `COGNITO_ISSUER` | Required exact trusted HTTPS Cognito user-pool issuer, validated against supported Cognito issuer host/pool syntax; one pool per deployment. Never derived from a request. |
-| `COGNITO_CLIENT_ID` | Required nonblank public browser client ID; used for the access-token `client_id` equality check. |
+| `COGNITO_REGION` | Region of the intended user pool; required by the Step 4.3 bootstrap CLI, optional for current API startup. |
+| `COGNITO_USER_POOL_ID` | Matching region-prefixed user-pool ID; derives the original regional issuer as `https://cognito-idp.{region}.amazonaws.com/{pool_id}` (China uses `amazonaws.com.cn`). Never accept issuer input from a request or CLI override. |
+| `COGNITO_CLIENT_ID` | Future token-verification setting for exact access-token `client_id` equality; not needed or added by Step 4.3. |
 | Existing `POSTGRES_*`, `REDIS_HOST`, `REDIS_PORT` | Retain database/session and readiness configuration; do not expose values in logs. No additional database or Redis auth-session store is proposed. |
 
 Derive JWKS URL; do not expose an arbitrary production `JWKS_URL` or key-file
 override. Fix RS256, 30-second leeway, cache/deadline bounds, and role rules in
-code. Fail API startup clearly for missing/malformed identity configuration;
+code. When protected routes are implemented, fail API startup clearly for
+missing/malformed identity configuration;
 do not start with unprotected business routes. Validate configuration without
 logging raw values. Migrations and seed CLIs remain separate from web startup
 and require no Cognito network call. The grant CLI additionally needs the trusted
-issuer configuration. Live backend verification uses public signing keys, not
+region/pool configuration. Step 4.3 validates it only when bootstrap is invoked,
+so existing API startup works without Cognito settings. Configuration derivation
+supports the original regional issuer profile, not updated/multi-region issuers.
+Live backend verification will use public signing keys, not
 AWS IAM credentials or a browser client secret.
 
 There is **no production authentication bypass**: no auth-disabled flag, magic
@@ -657,8 +675,8 @@ The paths below describe later work only; Step 4.1 creates none of them.
 | `backend/app/services/identity.py`, `workspaces.py`, `memberships.py` | Caller registration, atomic workspace creation, membership queries, and locked role mutations. |
 | `backend/app/schemas/identity.py`, `workspace.py`, `membership.py` | Strict request/response contracts and role literals. |
 | `backend/app/api/me.py`, `workspaces.py`, `memberships.py` | Protected identity/workspace and administrator-only membership endpoints. |
-| `backend/app/grant_demo_membership.py` | Explicit local first-demo-administrator grant. |
-| `backend/tests/auth_helpers.py`, `test_auth.py`, `test_identity.py`, `test_authorization.py`, `test_memberships.py`, `test_grant_demo_membership.py`, `run_http_api.py` | Generated keys, signature/permission/atomicity/concurrency/operator checks, and separate HTTP-server harness. |
+| `backend/app/bootstrap_membership.py`, `backend/app/cognito.py` | Implemented in Step 4.3: explicit local grant and trusted region/pool issuer derivation. |
+| `backend/tests/auth_helpers.py`, `test_auth.py`, `test_identity.py`, `test_authorization.py`, `test_memberships.py`, `test_bootstrap_membership.py`, `run_http_api.py` | Generated keys, signature/permission/atomicity/concurrency/operator checks, and separate HTTP-server harness; Step 4.3 implements the persistence/operator portion only. |
 | `backend/scripts/check_auth.py` | Guarded disposable key preparation, signed HTTP test credentials, and access-negative checks shared with the demo checker. |
 | `frontend/src/auth.ts`, `authContext.tsx`, `authTypes.ts` | Library configuration, callback/renewal/logout lifecycle, session-generation guards, and typed caller/workspace state. |
 | `frontend/src/components/WorkspaceSelector.tsx`, `pages/AccountPage.tsx`, `pages/WorkspaceNewPage.tsx`, `pages/MembershipsPage.tsx` | Own-ID display, workspace choice/creation, and administrator member management. |
@@ -708,7 +726,8 @@ complete early:
    in the Linux API container to add `0002_auth_workspaces`; never use
    `down --volumes` or rewrite the initial revision. Existing records stay put.
 8. Start the configured protected API/frontend, sign in on `localhost`, call
-   `/me`, and use the explicit local operator command for the first demo grant.
+   `/me`, and select the workspace deliberately granted through the explicit
+   operator command (which may have run before browser login).
    Refresh workspace discovery and verify all roles and unchanged demo records.
    An operator may run existing seeds explicitly only when desired; no seed or
    membership grant runs automatically.
@@ -716,6 +735,8 @@ complete early:
    and retry without deleting data. Do not restore an unauthenticated API over
    the upgraded database or downgrade away memberships as routine recovery.
 
-Step 4.1 ends with this contract and the progress update. Runtime authentication,
-the migration, dependencies, settings, operator command, browser login, and all
-test/checker changes above remain unimplemented until later requested work.
+Step 4.1 ended with documentation. The later Step 4.3 request implements only
+persistence, its migration and internal services, region/pool configuration,
+the explicit operator command, and their isolated tests. Authentication,
+protected APIs, browser login, auth dependencies, and authenticated HTTP-checker
+changes above remain deferred. Step 4.3 does not claim another step is complete.

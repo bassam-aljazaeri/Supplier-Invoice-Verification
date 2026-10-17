@@ -26,6 +26,7 @@ pytestmark = pytest.mark.postgres
 TABLES = {
     "workspaces", "suppliers", "purchase_orders", "purchase_order_lines",
     "delivery_receipts", "delivery_receipt_lines", "invoices", "invoice_lines",
+    "application_users", "workspace_memberships",
 }
 DAY = date(2026, 10, 13)
 PRICE_FIELDS = {"quantity": Decimal("10.000"), "unit_price": Decimal("25.0000"), "line_total": Decimal("250.00")}
@@ -141,7 +142,7 @@ def test_schema_matches_reviewed_metadata_and_named_constraints(postgres_engine)
                 if hasattr(column.type, "scale"):
                     assert columns[column.name]["type"].precision == column.type.precision
                     assert columns[column.name]["type"].scale == column.type.scale
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0001_manual_records"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0002_auth_workspaces"
 
 
 def test_migration_upgrade_is_repeatable_and_downgrade_round_trips(postgres_engine):
@@ -149,7 +150,8 @@ def test_migration_upgrade_is_repeatable_and_downgrade_round_trips(postgres_engi
     # before downgrade and run only on the disposable database, with no fixture rows.
     with postgres_engine.connect() as connection:
         require_test_marker(connection, os.environ)
-        assert connection.execute(select(Workspace)).first() is None
+        for table in Base.metadata.sorted_tables:
+            assert connection.execute(select(table).limit(1)).first() is None
     config = migration_config()
     command.upgrade(config, "head")
     command.upgrade(config, "head")
