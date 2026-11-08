@@ -1,7 +1,11 @@
 # Progress
 
-Current milestone: 4 - Authentication and workspace authorization (implementation and validation complete)
-Current task: Merge pull request #3 and synchronize local main
+Current milestone: 5 - Private-document upload and background processing (started)
+Current task: Step 5.1 contract prepared; user review pending
+
+Milestone 4: Completed. Existing implementation and user-verification evidence
+is retained below; this documentation checkpoint does not verify PR #3 merge
+or local-main synchronization.
 
 Milestone 2: Completed. The validation records below are retained as historical
 evidence; Step 3.1 does not claim a new CI run or pull-request merge.
@@ -31,6 +35,8 @@ Completed:
 - Completed Step 4.3 additive identity/membership persistence, explicit operator bootstrap, and guarded PostgreSQL verification
 - Completed Step 4.4 Cognito access-token verification, workspace permissions, identity/workspace/membership APIs, and authenticated disposable HTTP checks
 - Completed Step 4.5 browser PKCE login, memory session lifecycle, workspace-aware requests, onboarding/administration UI, and synthetic frontend verification
+- Completed Milestone 4 - Authentication and workspace authorization; retained user verification below
+- Prepared the Step 5.1 private-document upload/background-processing contract; user review pending
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -590,3 +596,26 @@ Remaining limits:
 - Expiry/renewal failures and interrupted writes have automated coverage but were not manually verified with real Cognito.
 - GitHub push and pull-request backend/frontend checks passed for commit 2152ef0.
 - Approval, uploads, AI, exports, and deployment remain outside this milestone.
+
+Step 5.1 documentation work (2026-10-28; Windows host PowerShell):
+- Read `AGENTS.md`, `docs/scope.md`, this progress record, `docs/manual-workflow.md`, and `docs/auth-workspaces.md` before editing. Inspected backend application/session/model/migration/authorization/error contracts, frontend navigation/request/session integration, Compose services, disposable database/HTTP guards, PowerShell checker, and GitHub Actions workflow.
+- Explained the planned documentation changes before editing. Created `docs/document-processing.md` as the proposed Step 5 contract and updated only this progress record. Milestone 4 is completed; Milestone 5 is started; Step 5.1 contract prepared, user review pending. Earlier work, checks, and user-verification entries are retained as historical evidence.
+- Consulted primary Celery, Boto3/S3, Starlette, pypdf, and Pillow documentation for acknowledgement/visibility behavior, private storage/downloads, and bounded parsing. References are included in the contract; AWS setup and current pricing verification remain Step 5.6.
+
+Step 5.1 decisions proposed for review:
+- Upload one fictional PDF/JPEG/PNG, at most 5,000,000 bytes; exactly one unencrypted PDF page or one valid image frame, at most 10,000,000 decoded pixels and 10,000 pixels per dimension. Preserve all manual drafts; uploaded documents never invent invoice business values. Extraction/human review starts with a separate Step 6 contract.
+- Add only workspace-owned `documents` and one durable `document_jobs` row per finalized upload. The job also serves as the transactional outbox; PostgreSQL owns state/scheduling, Redis transports identifier-only Celery messages, and separate worker/dispatcher processes use the backend image. Local private shared-volume storage avoids AWS charges; Boto3/private encrypted S3 remains the cloud target.
+- Document streaming request/multipart limits, scoped stable upload-attempt keys, incomplete-upload/orphan recovery, atomic claims, expiring ownership leases, conditional stale-attempt rejection, database-scheduled retries, and one bounded explicit retry cycle. No exactly-once execution promise or Celery result backend.
+- Document the five requested APIs, safe envelopes/three fictional JSON examples, accepted-only short-lived attachment grants, role matrix, bounded polling, uncertain-write recovery, File clearing, isolated test/demo plan, costs/limits, and ordered Steps 5.2-5.7 with prerequisites and done conditions.
+- Resolve the current all-POSTs-are-writes rule with a proposed document-specific download read permission for approvers. Extend browser JSON/201 assumptions narrowly for multipart and 202/200 document responses; preserve existing Cognito, cancellation, manual-record, health/readiness, and error behavior. No blocking scope conflict was found; implementation remains unrequested and review pending.
+
+Step 5.1 checks actually performed:
+- Initial Git status showed only the pre-existing untracked `Microsoft/` directory. Reviewed the documentation diff and final change scope; only `docs/document-processing.md` and `docs/progress.md` were changed by this task.
+- PowerShell parsed all three fenced JSON examples and checked matching document/workspace IDs, queued-state nullable fields, and the existing conflict-envelope shape.
+- Documentation structure assertions passed: 13 ordered sections, all six remaining implementation parts, all five requested API routes, ownership/lease fields, and all six document-state transition rows. Reviewed the contract against the requested scope and inspected implementation conventions.
+- `git diff --check` passed for tracked changes. Explicit checks passed for trailing whitespace, final newlines, and balanced code fences in both changed/new documents.
+
+Step 5.1 limits and next part:
+- No application code, dependency/lockfile, Compose, CI, or existing migration was changed. No application tests, lint/build, Docker commands, database operations, browser demonstration, worker/broker/storage integration, or online CI were run in this documentation-only checkpoint; previous results above were not rerun.
+- Actual environment files and `Microsoft/` contents were not read or modified. No AWS resource, commit, push, merge, or local-main synchronization was performed. PR #3's earlier merge task is historical context, not a result claimed here.
+- Stop after Step 5.1. Proposed next part after review and a separate request: Step 5.2, additive document/job schema and migrations with guarded disposable PostgreSQL verification.
