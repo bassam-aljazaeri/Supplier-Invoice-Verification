@@ -18,7 +18,7 @@ pytestmark = pytest.mark.postgres
 
 def test_additive_upgrade_preserves_populated_initial_records(postgres_engine):
     config = migration_config()
-    tables = [table for table in Base.metadata.sorted_tables if table.name not in {"application_users", "workspace_memberships"}]
+    tables = [table for table in Base.metadata.sorted_tables if table.name not in {"application_users", "workspace_memberships", "documents", "document_jobs"}]
     workspace_ids = [DEMO_WORKSPACE_ID, uuid4()]
 
     def snapshot(connection):
@@ -45,7 +45,7 @@ def test_additive_upgrade_preserves_populated_initial_records(postgres_engine):
         command.upgrade(config, "head")
         with postgres_engine.connect() as connection:
             assert snapshot(connection) == before
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002_auth_workspaces"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0003_documents"
             for model in (ApplicationUser, WorkspaceMembership):
                 assert connection.scalar(select(func.count()).select_from(model)) == 0
     finally:

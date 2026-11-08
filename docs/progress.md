@@ -1,7 +1,7 @@
 # Progress
 
 Current milestone: 5 - Private-document upload and background processing (started)
-Current task: Step 5.1 contract prepared; user review pending
+Current task: Step 5.2 document/job schema completed and locally verified; stopped before Step 5.3
 
 Milestone 4: Completed. Existing implementation and user-verification evidence
 is retained below; this documentation checkpoint does not verify PR #3 merge
@@ -37,6 +37,7 @@ Completed:
 - Completed Step 4.5 browser PKCE login, memory session lifecycle, workspace-aware requests, onboarding/administration UI, and synthetic frontend verification
 - Completed Milestone 4 - Authentication and workspace authorization; retained user verification below
 - Prepared the Step 5.1 private-document upload/background-processing contract; user review pending
+- Completed Step 5.2 document/job models, additive migration, and guarded PostgreSQL verification
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -619,3 +620,36 @@ Step 5.1 limits and next part:
 - No application code, dependency/lockfile, Compose, CI, or existing migration was changed. No application tests, lint/build, Docker commands, database operations, browser demonstration, worker/broker/storage integration, or online CI were run in this documentation-only checkpoint; previous results above were not rerun.
 - Actual environment files and `Microsoft/` contents were not read or modified. No AWS resource, commit, push, merge, or local-main synchronization was performed. PR #3's earlier merge task is historical context, not a result claimed here.
 - Stop after Step 5.1. Proposed next part after review and a separate request: Step 5.2, additive document/job schema and migrations with guarded disposable PostgreSQL verification.
+
+Step 5.2 implementation (2026-11-09; Windows host PowerShell, Python/Alembic/pytest inside Linux Docker containers):
+- Read the instructions, scope, document-processing contract, authentication/workspace contract, and progress before editing. Inspected model/migration conventions, fixture isolation, schema checks, disposable checker, and CI integration. Confirmed branch `feat/document-processing`; initial Git status contained only pre-existing untracked `Microsoft/`. Explained the planned files and purposes before changes. No contract change was needed.
+- Added `backend/app/models/document.py` and `document_job.py`, and exported their models/state enums from `models/__init__.py`. These add only `documents` and `document_jobs`; the document retains the existing server-generated UUID/timestamps/workspace conventions, and the job uses `document_id` as its sole primary key. Timestamps are timezone-aware with server creation/update defaults; later mutation services must explicitly update `updated_at`.
+- Added `backend/migrations/versions/0003_documents.py`, revision `0003_documents`, after actual previous head `0002_auth_workspaces`. Upgrade creates only the new tables, named constraints, and indexes; downgrade removes their indexes and drops jobs before documents. Existing revisions, tables, invoice records, business rules, and seed implementations are unchanged.
+- Added `backend/tests/test_document_schema.py` for real PostgreSQL persistence/defaults, all documented outcome categories, filename/size/hash/type bounds, safe errors and timestamp/owner combinations, scoped upload-key conflicts, nonunique file hashes, storage-key uniqueness, dispatch/retry/lease invariants, cross-workspace insert/update denial, one-job uniqueness, ORM relationship scoping, membership/uploader history, atomic rollback/recovery, and the partial indexes.
+- Added `backend/tests/test_document_migration.py` for a populated `0002_auth_workspaces` upgrade, committed document/job rereads through independent sessions, downgrade of only `0003_documents`, and re-upgrade. It compares every row/value/ID/timestamp in all ten previous application tables, including identities/memberships and exact manual invoice values. Each destructive phase repeats the connected disposable-target guard; cleanup uses this fixture's known workspace/user IDs only.
+- Adapted `test_postgres_schema.py` for twelve application tables, the new head, and the job's nongenerated `document_id` primary key. Adapted original-business-only snapshots in `test_auth_migration.py`, `test_seed_demo.py`, and `test_bootstrap_membership.py` to keep their original eight-table scope; the authentication migration test now expects the current head after upgrading. Existing regression assertions remain in place.
+
+Step 5.2 database decisions and limits:
+- Enforced unique `(workspace_id, uploader_id, upload_attempt_key)` and unique storage keys; SHA-256 has only a format check, no global/scoped uniqueness or hash index. Jobs have a composite `(workspace_id, document_id)` foreign key to documents, plus the normal workspace reference; mismatched workspace links are rejected by PostgreSQL. All new foreign keys use `ON DELETE RESTRICT`.
+- Document uploader references `application_users`, never `workspace_memberships`. Tests change/remove membership and deactivate the user without losing document/job provenance; deleting a referenced uploader or document is restricted.
+- Named row checks enforce six document states, three detected types, state-specific safe rejection/failure codes, accepted-type presence, receiving ownership, finalized-upload/terminal timestamps, byte/digest/display-name limits, and four dispatch states. Job checks enforce paired publication/processing owners and leases, published timestamps, coherent due times, lifetime attempts 0-6, and one explicit retry cycle with a three-attempt budget per cycle. Partial indexes support receiving, publication, and processing lease recovery and due dispatch.
+- Leases may already be expired in stored rows so later reconciliation can find them. Current-time expiry/ownership comparisons, transitions, immutability on later updates, atomic cross-row state coordination, and task execution belong to Steps 5.3/5.4. No triggers, worker, storage access, or transition service was added; this step verifies static row constraints and workspace relationships.
+
+Step 5.2 checks actually performed:
+- Docker access was initially denied by the sandbox; the requested checker then ran with authorized Docker access. The first full checker run used `supplier-invoice-verification-check-1dcdac339b7743caa4554e72a5ab5bcf`: migrations/head verification succeeded; pytest reported **810 passed, 2 failed**, with the existing TestClient deprecation warning. Both failures were a new test-helper argument collision before SQL execution. Renamed that helper argument so its NULL/unknown-state cases reached PostgreSQL; no schema correction was required.
+- Final `.\scripts\check-backend.ps1` passed end to end, exit code 0, using disposable project `supplier-invoice-verification-check-e2eeef2034634d4f896659931e68482e`. Compose validation, locked Python 3.12.14 image build, bounded startup, guarded PostgreSQL preparation, migrations, `alembic current`, and dynamic head verification passed at **0003_documents (head)**.
+- Final Linux-container `pytest -q` passed **812 tests**, no failures or skips, in **56.78 seconds**. This includes both new focused PostgreSQL files, populated preservation/downgrade/re-upgrade, model/migration metadata agreement, named constraints/defaults/indexes, all retained authentication/permission/business tests, and the existing empty-disposable-database schema lifecycle round trip. The existing unsuppressed Starlette TestClient/httpx deprecation warning remains; no dependency was changed to hide it.
+- Retained real HTTP checks passed: public health/readiness before migrations; repeat workspace initialization and fictional demo seed; real generated-signature verification with 401/403/scoped-404 boundaries; exact saved IDs/timestamps/lines/counts/EUR strings before and after API/PostgreSQL restart with the volume retained. During disposable PostgreSQL/Redis outage `/health` stayed 200 and `/ready` returned its existing 503 body; both recovered to their expected 200 bodies.
+- Both successful and failed checker runs removed their own containers, networks, volumes, and generated temporary settings. A separate metadata-only audit confirmed neither disposable project nor its generated settings remained; no development database connection or command was used.
+- `git diff --check` passed. Explicit new-file whitespace/final-newline checks and final changed-file scope review passed. Confirmed prior migrations, application routes/services/session/authorization, dependencies/lockfiles, frontend, Compose, CI, checker, scope, and existing contracts are unchanged. Changes are limited to the two models/model exports, one new revision, two new/four adapted test files, and this progress record.
+
+Step 5.2 verification commands and remaining boundaries:
+- To repeat from the repository root using **Windows host PowerShell** (the checker runs Python/Alembic/pytest inside **Linux containers**, using generated disposable settings):
+
+```powershell
+.\scripts\check-backend.ps1
+git diff --check
+```
+
+- No host Python is required. No upload endpoint, storage adapter/S3 resource, Celery worker, dispatcher, frontend feature, OCR, extraction, or invoice-creation behavior was implemented. Actual environment files and `Microsoft/` contents were not inspected or changed; no commit or push was performed.
+- Online GitHub CI has not run for this uncommitted revision; local checker results do not claim an online pass. Frontend tests/lint/build were not rerun because the frontend is unchanged. Development migrations/seeds were not run. All Step 5.2 local verification is complete; stop here. The next separately requested part would be Step 5.3 storage/upload APIs.

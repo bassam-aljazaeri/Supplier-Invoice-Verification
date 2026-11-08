@@ -27,6 +27,7 @@ TABLES = {
     "workspaces", "suppliers", "purchase_orders", "purchase_order_lines",
     "delivery_receipts", "delivery_receipt_lines", "invoices", "invoice_lines",
     "application_users", "workspace_memberships",
+    "documents", "document_jobs",
 }
 DAY = date(2026, 10, 13)
 PRICE_FIELDS = {"quantity": Decimal("10.000"), "unit_price": Decimal("25.0000"), "line_total": Decimal("250.00")}
@@ -122,9 +123,13 @@ def test_schema_matches_reviewed_metadata_and_named_constraints(postgres_engine)
         assert compare_metadata(MigrationContext.configure(connection, opts={"compare_type": True, "compare_server_default": True}), Base.metadata) == []
         for table_name, table in Base.metadata.tables.items():
             columns = {column["name"]: column for column in inspector.get_columns(table_name)}
-            assert str(columns["id"]["type"]) == "UUID"
-            assert columns["id"]["nullable"] is False
-            assert "gen_random_uuid" in columns["id"]["default"]
+            primary_key = "document_id" if table_name == "document_jobs" else "id"
+            assert str(columns[primary_key]["type"]) == "UUID"
+            assert columns[primary_key]["nullable"] is False
+            if table_name == "document_jobs":
+                assert columns[primary_key]["default"] is None
+            else:
+                assert "gen_random_uuid" in columns[primary_key]["default"]
             assert columns["created_at"]["type"].timezone is True
             assert columns["created_at"]["nullable"] is False
             assert columns["created_at"]["default"] is not None
@@ -142,7 +147,7 @@ def test_schema_matches_reviewed_metadata_and_named_constraints(postgres_engine)
                 if hasattr(column.type, "scale"):
                     assert columns[column.name]["type"].precision == column.type.precision
                     assert columns[column.name]["type"].scale == column.type.scale
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0002_auth_workspaces"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0003_documents"
 
 
 def test_migration_upgrade_is_repeatable_and_downgrade_round_trips(postgres_engine):
