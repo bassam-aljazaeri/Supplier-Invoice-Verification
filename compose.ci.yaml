@@ -3,7 +3,8 @@
 services:
   api:
     ports: !reset []
-    volumes: !reset []
+    volumes: !override
+      - document_data:/var/lib/supplier-invoice-verification/documents
     # Separate guarded entrypoint; the production app has no test mode or JWKS override.
     command: ["python", "-m", "tests.run_http_api"]
     environment:

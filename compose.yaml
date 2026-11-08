@@ -15,10 +15,16 @@ services:
       COGNITO_REGION: ${COGNITO_REGION:-}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_APP_CLIENT_ID: ${COGNITO_APP_CLIENT_ID:-}
+      DOCUMENT_STORAGE_BACKEND: local
+      DOCUMENT_STORAGE_ROOT: /var/lib/supplier-invoice-verification/documents
+      DOCUMENT_TEMP_ROOT: /tmp/siv-documents
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./backend/app:/app/app
+      - document_data:/var/lib/supplier-invoice-verification/documents
+    tmpfs:
+      - /tmp/siv-documents:size=32m,mode=0700
     depends_on:
       db:
         condition: service_healthy
@@ -50,3 +56,4 @@ services:
 
 volumes:
   postgres_data:
+  document_data:

@@ -53,6 +53,7 @@ SAFE_FIELDS = {
     "delivery_receipt_id", "quantity_received", "invoice_id", "invoice_number",
     "invoice_date", "due_date", "tax_amount", "total",
     "slug", "application_user_id", "role",
+    "file", "idempotency_key", "upload_attempt_key", "state", "ticket",
 }
 
 
@@ -110,6 +111,12 @@ class BusinessRoute(APIRoute):
 
     workspace_mode = "business"
 
+    def requires_write(self, request):
+        return request.method != "GET"
+
+    async def before_request(self, request):
+        pass
+
     def __init__(self, *args, **kwargs):
         # Explicit 422 replaces FastAPI's default detail schema in OpenAPI.
         kwargs["responses"] = {**(kwargs.get("responses") or {}), **BUSINESS_ERROR_RESPONSES}
@@ -123,9 +130,10 @@ class BusinessRoute(APIRoute):
             try:
                 from app.api.authorization import authorized_request
 
-                async with authorized_request(request, self.workspace_mode):
+                async with authorized_request(request, self.workspace_mode, write_required=self.requires_write(request)):
                     if "workspace_id" in request.query_params:
                         raise invalid("workspace_id", "This field is not allowed.")
+                    await self.before_request(request)
                     response = await original_handler(request)
                     response.headers["Cache-Control"] = "no-store"
                     return response

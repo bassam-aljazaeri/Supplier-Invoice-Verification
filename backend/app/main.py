@@ -9,7 +9,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.db import engine
 from app.auth import AccessTokenVerifier
 from app.cognito import access_token_settings
-from app.api import delivery_receipts, invoices, me, memberships, purchase_orders, suppliers, workspaces
+from app.api import delivery_receipts, documents, invoices, me, memberships, purchase_orders, suppliers, workspaces
+from app.document_runtime import DocumentRuntime
 
 
 def create_redis_client() -> redis.Redis:
@@ -31,9 +32,12 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         try:
-            app.state.redis.close()
+            await app.state.documents.close()
         finally:
-            engine.dispose()
+            try:
+                app.state.redis.close()
+            finally:
+                engine.dispose()
 
 
 def health() -> dict[str, str]:
@@ -66,10 +70,11 @@ def ready(response: Response, request: Request) -> dict[str, str]:
     return {"status": "ready", "database": "ok", "redis": "ok"}
 
 
-def create_app(*, verifier: AccessTokenVerifier | None = None) -> FastAPI:
+def create_app(*, verifier: AccessTokenVerifier | None = None, document_storage=None, document_temp_dir=None) -> FastAPI:
     application = FastAPI(title="Supplier-Invoice-Verification API", lifespan=lifespan)
     application.state.token_verifier = verifier
-    for router in (suppliers.router, purchase_orders.router, delivery_receipts.router, invoices.router, me.router, workspaces.router, memberships.router):
+    application.state.documents = DocumentRuntime(document_storage, document_temp_dir)
+    for router in (suppliers.router, purchase_orders.router, delivery_receipts.router, invoices.router, me.router, workspaces.router, memberships.router, documents.router):
         application.include_router(router)
     application.add_api_route("/health", health, methods=["GET"])
     application.add_api_route("/ready", ready, methods=["GET"])

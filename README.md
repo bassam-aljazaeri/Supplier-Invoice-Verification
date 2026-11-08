@@ -19,6 +19,11 @@ See [browser setup and verification](#browser-login-and-workspaces-step-45) and
 The older Step 3 examples below describe business payloads; their requests now
 also require the authentication and workspace headers documented there.
 
+Step 5.3 adds authenticated document APIs and private local storage alongside
+the manual records. Successful uploads remain queued until Step 5.4; there is
+no document worker or Documents website page yet. See
+[private document APIs](#private-local-documents-step-53).
+
 For setup and the 10 ordered / 8 delivered / 10 invoiced demonstration, see
 [the demo guide](docs/demo.md) and [the seed instructions below](#repeatable-fictional-demo-step-36).
 
@@ -1390,3 +1395,141 @@ No development API/database or AWS resource was used by these checks.
 
 Real Cognito/browser verification and online GitHub CI remain unobserved here.
 Actual local results and file purposes are recorded in [progress](docs/progress.md).
+
+## Private local documents (Step 5.3)
+
+Use only generated fictional files. An uploaded document is a separate
+workspace-owned record; uploading never creates or changes an invoice.
+The database revision stays `0003_documents`; Step 5.3 adds no migration.
+The [document-processing contract](docs/document-processing.md) describes the
+remaining worker, browser, and cloud-storage work.
+
+### Local storage and configuration
+
+Compose mounts its project-owned `document_data` named volume only into the API,
+at `/var/lib/supplier-invoice-verification/documents`. No storage port or static
+file serving is added. Completed files and partial writes occupy separate private
+directories, with server-generated keys, directory/file permissions 0700/0600,
+no symlink traversal, and atomic exclusive publication. User filenames are
+display basenames, never storage paths. Identical file bytes are not treated as
+duplicate business invoices or deduplicated across workspaces.
+
+Trusted API process configuration (Compose supplies these fixed local values):
+
+| Setting | Local value/purpose |
+| --- | --- |
+| `DOCUMENT_STORAGE_BACKEND` | `local`; unsupported modes fail closed rather than selecting a fallback. There is no S3 implementation or AWS credential lookup in this step. |
+| `DOCUMENT_STORAGE_ROOT` | `/var/lib/supplier-invoice-verification/documents`; private named-volume root. Direct API process configurations must use an absolute Linux path without symlinks. |
+| `DOCUMENT_TEMP_ROOT` | `/tmp/siv-documents`; Compose supplies a 32 MiB private tmpfs. Incoming temporary files are unlinked/closed on success, rejection, timeout, or cancellation. |
+
+At most four uploads run per API process. Completed objects survive API/container
+restart while the named volume is retained. Deleting that volume loses private
+files; do not use volume deletion as routine recovery. This is single-host local
+storage, not S3 policy/encryption/durability verification or a production
+financial-data service. Real S3 configuration, Boto3, pricing, and controlled
+verification remain Step 5.6. No AWS call or resource is needed here.
+
+The CI override retains only its own project-scoped document volume, removes
+the development source mount and API host ports, and uses the existing synthetic
+signed HTTP harness. It requires Docker Compose 2.24.4+ for `!override` (local
+verification used Docker Desktop's newer Compose). Existing development
+PostgreSQL data and all migration files are preserved. See the
+[Compose merge rules](https://docs.docker.com/reference/compose-file/merge/).
+
+### HTTP contract
+
+Backend paths below require the current Cognito **access** bearer token and one
+canonical UUID `X-Workspace-ID`. Browser/proxy clients prepend `/api`; authenticated
+fetches must stay on that same origin. Administrator/accountant may upload/retry;
+all three member roles may read metadata and download accepted files. Backend
+checks apply on every request. Nonmembers have no access; other-workspace record
+IDs return scoped 404 rather than exposing another company's metadata.
+
+| Route | Request and result |
+| --- | --- |
+| `POST /documents` | Exactly one multipart file part named `file`, no other fields, and one canonical UUID `Idempotency-Key`. Returns 202 metadata with queued state, Location and Retry-After headers after private storage and the document/job commit succeed. |
+| `GET /documents` | `limit=20` (1-100), `offset=0` (0-10000), optional `state`, optional caller-scoped `upload_attempt_key`. Returns `items/limit/offset/total`, ordered by creation time then ID descending. Unknown/repeated parameters are rejected. |
+| `GET /documents/{id}` | Safe metadata/status, including a caller-specific `can_retry` hint; no storage key/path, file bytes, hash, upload key, or lease token. |
+| `POST /documents/{id}/retry` | Empty body. Only eligible failed processing after the 60-second cooldown and first three attempts, with finalized stored bytes and one unused retry cycle. Atomically requeues the same job; 202, otherwise 409. Approvers cannot retry. |
+| `POST /documents/{id}/download-url` | Empty body. Accepted files only, otherwise 409. Returns a 60-second local authenticated download grant. Approvers may request this POST as a read operation; other POST permissions are unchanged. |
+| `GET /documents/{id}/local-content?ticket=...` | Follow the local grant using the same bearer/workspace headers; the URL also binds the caller/document/workspace and expires or becomes invalid on API restart. Accepted-state and current membership are rechecked; response is an attachment with a generated filename, never an inline preview. |
+
+Download grants contain a relative `/api/documents/.../local-content` URL, which
+uses the existing proxy prefix. Direct backend clients remove `/api`. Keep
+grants/tickets in memory, never log them. Membership removal immediately denies
+subsequent local downloads; this local behavior does not prove S3 presigned-URL
+revocation behavior. API/Uvicorn access logs remain disabled. No frontend
+document flow, token storage, or browser write retries are added in this step.
+
+Uploads permit 1-5,000,000 **file bytes**. The streaming adapter also caps the
+complete multipart body at 5,065,536 bytes, overhead at 65,536 bytes, part headers
+at 8,192 bytes/16 headers, and the boundary at 70 characters. Actual received
+bytes are counted even with missing or understated Content-Length. Reception is
+bounded to 60 seconds with a ten-second idle limit, storage awaits to 15 seconds,
+and sets a 90-second upload request deadline. A late storage writer retains its
+upload slot and its own file descriptor until it exits. Database calls finish
+before their session closes, including cancellation cleanup after that deadline;
+a cancelled client must still treat the outcome as uncertain.
+
+PDF/JPEG/PNG **signatures** and SHA-256 are checked here; browser MIME and filename
+extensions are not trusted. Full decoding, encryption/page/frame/dimension checks,
+malware guarantees, and acceptance remain deferred. A recognized but malformed,
+encrypted, or multipage PDF can therefore be queued in Step 5.3. All such bytes
+remain private and undownloadable until future worker acceptance. The existing
+safe error envelope is retained: 401/403/404/409/422/503/500, plus document-upload
+413/415 using `validation_error` for size/unsupported-media failures.
+
+### Replay, failure recovery, and current limits
+
+Keep the same upload-attempt key for the same caller/workspace/file/name after
+an uncertain response. Replays return the original ID/current metadata: 202 for
+receiving/queued/processing, 200 for terminal states. Different bytes or display
+filename under that scoped key return 409; a new key intentionally creates a new
+document. Other operations reject the idempotency header. Never automatically
+resend a write after timeout, logout, navigation, or a workspace change; query
+the original workspace using `upload_attempt_key`, then read the returned ID.
+
+There is no shared database/filesystem transaction. The API commits a receiving
+reservation before storage, then conditionally finalizes that owner and inserts
+exactly one pending job in the same transaction. It returns queued success only
+afterward; no Celery message is sent. Storage failure or interruption can leave
+a receiving row and no job, with absent or completed private bytes. A failure
+after the final commit can return 503 even though queued state/job are durable.
+Completed objects are never blindly deleted on an uncertain commit or conflict.
+
+Normal successful uploads remain **queued** until the separately requested
+Step 5.4 worker/dispatcher exists. Incomplete receiving reservations do not
+resume merely because the client replays them. Step 5.4 must inspect expired
+upload leases, verify size/hash, then finalize matching bytes or close incomplete
+uploads; it must also clean abandoned private partials/orphans under the
+contract's age/ownership rules. No background cleanup or scheduler runs yet.
+Retry/download guards are implemented now, but ordinary uploads cannot reach
+accepted/failed worker outcomes in this step. Tests seed those later states only
+inside guarded disposable fixtures; there is no public acceptance bypass.
+
+### Repeat isolated verification
+
+From the repository root, use **Windows host PowerShell**. Python, Alembic,
+pytest, and the signed HTTP checker run inside **Linux Docker containers**:
+
+```powershell
+.\scripts\check-backend.ps1
+git diff --check
+```
+
+The checker creates its own PostgreSQL/Redis services, private document volume,
+tmpfs, and generated settings, then removes those resources. It never uses the
+development database or actual environment files. Alongside the retained health,
+authentication, migration, manual-record, and outage/recovery tests, it verifies
+real HTTP upload/replay/conflict, one durable queued job, and exact private bytes
+and metadata before/after API/PostgreSQL restart. Raw-ASGI tests separately cover
+missing/forged lengths and early bounds; controlled adapters/commit faults cover
+uncertain failure windows. These checks do not claim full file validation, real
+Cognito/browser acceptance, a worker/broker integration, or S3 verification.
+
+The adapter checks the closing-boundary callback explicitly rather than relying
+only on the parser's `finalize()`; see the [streaming parser API](https://multipart.fastapiexpert.com/api/).
+The only new dependency is `python-multipart` 0.0.33; all 42 prior lockfile
+package versions were retained. Exact observed results and remaining checks
+are recorded in [progress](docs/progress.md). No new development migration is
+needed for Step 5.3. Stop before Step 5.4.
