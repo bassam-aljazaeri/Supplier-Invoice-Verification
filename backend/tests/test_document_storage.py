@@ -11,7 +11,7 @@ import pytest
 
 from app.storage import StorageError, StorageIntegrity, StorageMissing, StoredObject
 from app.storage.local import LocalDocumentStorage, new_key
-from tests.document_helpers import pdf
+from tests.document_helpers import pdf, png
 
 
 def put(storage, key, data):
@@ -123,3 +123,18 @@ def test_ticket_scope_tampering_expiry_and_restart(tmp_path, monkeypatch):
     assert not LocalDocumentStorage(storage.root).verify_ticket(ticket, doc, workspace, caller)
     monkeypatch.setattr(local.time, "time", lambda: 1060)
     assert not storage.verify_ticket(ticket, doc, workspace, caller)
+
+
+def test_cleanup_scan_is_bounded_and_advances_across_passes(tmp_path):
+    storage = LocalDocumentStorage(tmp_path / "private")
+    for _ in range(113):
+        put(storage, new_key(uuid4(), uuid4()), png())
+    seen = set()
+    try:
+        for _ in range(3):
+            candidates = storage.cleanup_candidates()
+            assert len(candidates) <= 100
+            seen.update(c.key for c in candidates)
+        assert len(seen) == 113
+    finally:
+        storage.close()

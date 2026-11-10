@@ -1,6 +1,7 @@
 """Linux private-volume storage: immutable publication, bounded reads, no paths from users."""
 
 import base64
+import fcntl
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -13,7 +14,7 @@ import stat
 import time
 from uuid import UUID, uuid4
 
-from app.storage import DownloadGrant, StorageError, StorageIntegrity, StorageMissing, StorageUnavailable, StoredObject
+from app.storage import DownloadGrant, StorageCandidate, StorageError, StorageIntegrity, StorageMissing, StorageUnavailable, StoredObject
 
 MAX_FILE_SIZE = 5000000
 CHUNK_SIZE = 65536
@@ -44,6 +45,7 @@ class LocalDocumentStorage:
         if not self.root.is_absolute() or ".." in self.root.parts:
             raise StorageIntegrity()
         self._signing_key = secrets.token_bytes(32)
+        self._scans = {}
 
     @contextmanager
     def _directories(self):
@@ -100,8 +102,11 @@ class LocalDocumentStorage:
 
     def stat(self, key):
         digest, size = hashlib.sha256(), 0
+        deadline = time.monotonic() + STORAGE_TIMEOUT
         with self.open_bounded(key, MAX_FILE_SIZE) as file:
             while data := file.read(CHUNK_SIZE):
+                if time.monotonic() >= deadline:
+                    raise StorageUnavailable()
                 digest.update(data)
                 size += len(data)
         return StoredObject(size, digest.hexdigest())
@@ -118,22 +123,24 @@ class LocalDocumentStorage:
 
         with self._directories() as (objects, partials):
             partial = uuid4().hex + ".part"
+            destination = None
             try:
                 descriptor = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=partials)
-                with os.fdopen(descriptor, "wb") as destination:
-                    digest, actual = hashlib.sha256(), 0
-                    file.seek(0)
-                    while data := file.read(CHUNK_SIZE):
-                        check_time()
-                        actual += len(data)
-                        if actual > size:
-                            raise StorageIntegrity()
-                        digest.update(data)
-                        destination.write(data)
-                    if actual != size or digest.hexdigest() != sha256:
+                destination = os.fdopen(descriptor, "wb")
+                fcntl.flock(destination.fileno(), fcntl.LOCK_EX)
+                digest, actual = hashlib.sha256(), 0
+                file.seek(0)
+                while data := file.read(CHUNK_SIZE):
+                    check_time()
+                    actual += len(data)
+                    if actual > size:
                         raise StorageIntegrity()
-                    destination.flush()
-                    os.fsync(destination.fileno())
+                    digest.update(data)
+                    destination.write(data)
+                if actual != size or digest.hexdigest() != sha256:
+                    raise StorageIntegrity()
+                destination.flush()
+                os.fsync(destination.fileno())
                 check_time()
                 try:
                     # link is atomic and exclusive; rename/replace could overwrite a winner.
@@ -148,6 +155,69 @@ class LocalDocumentStorage:
                     os.unlink(partial, dir_fd=partials)
                 except FileNotFoundError:
                     pass
+                finally:
+                    if destination is not None:
+                        destination.close()  # Lock spans write, publication and partial unlink.
+
+    def cleanup_candidates(self):
+        candidates = []
+        with self._directories() as directories:
+            for partial, descriptor in ((False, directories[0]), (True, directories[1])):
+                scan = self._scans.get(partial)
+                if scan is None:
+                    scan = self._scans[partial] = os.scandir(descriptor)
+                for _ in range(50):
+                    entry = next(scan, None)
+                    if entry is None:
+                        scan.close()
+                        self._scans.pop(partial, None)
+                        break
+                    pattern = r"[0-9a-f]{32}\.part" if partial else KEY_PATTERN
+                    if re.fullmatch(pattern, entry.name) is None:
+                        continue
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue
+                    if stat.S_ISREG(info.st_mode):
+                        candidates.append(StorageCandidate(entry.name, partial, info.st_mtime, info.st_dev, info.st_ino))
+        return candidates
+
+    def close(self):
+        for scan in self._scans.values():
+            scan.close()
+        self._scans.clear()
+
+    def delete_candidate(self, candidate, older_than):
+        if candidate.partial:
+            if re.fullmatch(r"[0-9a-f]{32}\.part", candidate.key) is None:
+                raise StorageIntegrity()
+        else:
+            self._key(candidate.key)
+        if candidate.modified >= older_than:
+            return False
+        with self._directories() as directories:
+            directory = directories[1 if candidate.partial else 0]
+            try:
+                descriptor = os.open(candidate.key, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            except FileNotFoundError:
+                return False
+            try:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return False
+                info = os.fstat(descriptor)
+                current = os.stat(candidate.key, dir_fd=directory, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino) != (candidate.device, candidate.inode) or current.st_ino != info.st_ino or info.st_mtime >= older_than:
+                    return False
+                os.unlink(candidate.key, dir_fd=directory)
+                os.fsync(directory)
+                return True
+            except FileNotFoundError:
+                return False
+            finally:
+                os.close(descriptor)
 
     def delete(self, key):
         self._key(key)

@@ -30,6 +30,15 @@ class StoredObject:
 
 
 @dataclass(frozen=True)
+class StorageCandidate:
+    key: str
+    partial: bool
+    modified: float
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
 class DownloadGrant:
     url: str
     expires_at: datetime
@@ -40,5 +49,7 @@ class DocumentStorage(Protocol):
     def open_bounded(self, key: str, max_bytes: int) -> AbstractContextManager: ...
     def stat(self, key: str) -> StoredObject: ...
     def delete(self, key: str) -> None: ...
+    def cleanup_candidates(self) -> list[StorageCandidate]: ...
+    def delete_candidate(self, candidate: StorageCandidate, older_than: float) -> bool: ...
     def download_grant(self, document_id: UUID, workspace_id: UUID, caller_id: UUID, expires_in: int) -> DownloadGrant: ...
     def verify_ticket(self, ticket: str, document_id: UUID, workspace_id: UUID, caller_id: UUID) -> bool: ...

@@ -1402,11 +1402,13 @@ Use only generated fictional files. An uploaded document is a separate
 workspace-owned record; uploading never creates or changes an invoice.
 The database revision stays `0003_documents`; Step 5.3 adds no migration.
 The [document-processing contract](docs/document-processing.md) describes the
-remaining worker, browser, and cloud-storage work.
+worker, browser, and cloud-storage contract. Step 5.4 worker instructions follow
+the original Step 5.3 checkpoint below.
 
 ### Local storage and configuration
 
-Compose mounts its project-owned `document_data` named volume only into the API,
+Compose mounts its project-owned `document_data` named volume into the API and,
+when the `processing` profile is enabled, the worker and dispatcher,
 at `/var/lib/supplier-invoice-verification/documents`. No storage port or static
 file serving is added. Completed files and partial writes occupy separate private
 directories, with server-generated keys, directory/file permissions 0700/0600,
@@ -1497,9 +1499,9 @@ a receiving row and no job, with absent or completed private bytes. A failure
 after the final commit can return 503 even though queued state/job are durable.
 Completed objects are never blindly deleted on an uncertain commit or conflict.
 
-Normal successful uploads remain **queued** until the separately requested
-Step 5.4 worker/dispatcher exists. Incomplete receiving reservations do not
-resume merely because the client replays them. Step 5.4 must inspect expired
+At the Step 5.3 checkpoint successful uploads remained **queued**. Step 5.4 now
+processes them when its services run (see below). Incomplete receiving reservations
+do not resume merely because the client replays them. The reconciler inspects expired
 upload leases, verify size/hash, then finalize matching bytes or close incomplete
 uploads; it must also clean abandoned private partials/orphans under the
 contract's age/ownership rules. No background cleanup or scheduler runs yet.
@@ -1532,4 +1534,118 @@ only on the parser's `finalize()`; see the [streaming parser API](https://multip
 The only new dependency is `python-multipart` 0.0.33; all 42 prior lockfile
 package versions were retained. Exact observed results and remaining checks
 are recorded in [progress](docs/progress.md). No new development migration is
-needed for Step 5.3. Stop before Step 5.4.
+needed for Step 5.3. The following Step 5.4 section extends this checkpoint.
+
+## Local background document processing (Step 5.4)
+
+Supplier-Invoice-Verification now validates queued documents locally. PostgreSQL
+owns document/job state; Redis DB 1 carries JSON document identifiers. The separate
+Celery worker validates originals from the private volume. A small dispatcher polls
+every five seconds, at most 20 jobs per category, and performs bounded recovery and
+cleanup. No invoice is created, and no OCR, browser document UI or AWS call is added.
+The schema remains **0003_documents**; no new migration is required.
+
+For an already configured local stack at that revision, **Windows PowerShell**
+(all Python processes below run inside **Linux containers**):
+
+```powershell
+docker compose --profile processing up --build --detach
+docker compose ps --all
+docker compose logs --tail 100 worker dispatcher
+docker compose exec -T api alembic current
+```
+
+Expected: API, PostgreSQL, Redis, worker and dispatcher running; Alembic reports
+`0003_documents (head)`. The worker banner shows queue `documents`, prefork concurrency
+1, Redis `/1`, and disabled results. No additional host port is published. Worker and
+dispatcher use the backend image and the same private volume; they do not mount source
+code or receive Cognito configuration. Their memory caps are 512/256 MiB. Stop just
+processing with `docker compose stop worker dispatcher`; pending work stays durable.
+These commands are instructions, not a record of migrations against your development DB.
+
+Uploads still return 202/queued after storage plus database commit. Metadata then shows
+`processing`, followed by `accepted`, `rejected` or `failed`. Accepted files alone can
+use the existing authorized attachment-download routes. Structural acceptance is not
+malware scanning. PDF validation requires exactly one page and no encryption; images
+must decode fully, have one frame, dimensions at most 10,000 each, and at most
+10,000,000 pixels. APNG and multi-image JPEG containers are rejected. File byte limits
+remain 5,000,000. Original bytes are never rewritten.
+
+The parser receives a read-only anonymous input descriptor, a scrubbed environment
+and no inherited storage/database descriptors. It runs with 20-second wall,
+10-second CPU, and 256 MiB address-space limits; temporary input uses the private
+32 MiB mount. Linux seccomp blocks networking and creation/execution of other processes;
+unsupported architectures or unavailable containment fail closed (worker startup probes
+the restriction). Supported hosts here are Linux x86_64/aarch64 containers. Process
+groups are killed/reaped on timeout/cancellation, with a parent-death signal for worker
+loss. This is limited parser containment, not a complete hostile-code sandbox or a
+production financial-data security platform.
+
+Dispatch commits its 30-second ownership lease before publishing, waits at most ten
+seconds outside a database transaction, and conditionally records success. Failed
+publication waits 30 seconds; successful but unclaimed publication becomes due again
+after 180 seconds. Redis message loss therefore cannot erase pending database work.
+Atomic worker claims take a fresh token and a 120-second nonrenewable lease; only that
+unexpired owner can finish. Repeated delivery is harmless, and an expired attempt cannot
+overwrite a newer one. Interrupted attempts are recovered by the dispatcher.
+Worker claim/completion wait under a three-second database lock timeout, so brief
+publisher bookkeeping does not cause a queued delivery to be acknowledged unclaimed.
+Dispatcher scans skip locked rows instead of waiting behind another dispatcher.
+
+Temporary failures retry after ten then thirty seconds, with three claims per cycle.
+After the first exhausted cycle, administrator/accountant callers may explicitly retry
+once through `POST /documents/{id}/retry`, after the existing 60-second cooldown. The
+same job retains its lifetime count (maximum six). Permanent file rejection never
+retries; storage-integrity/upload-incomplete failures are also ineligible. No automatic
+browser write retry is added. Celery uses late acknowledgement, prefetch 1, soft/hard
+limits 45/60 seconds and Redis visibility timeout 180; database scheduling handles
+retries rather than Celery ETA/autoretry. Execution is not exactly once. See
+[Celery's Redis visibility guidance](https://docs.celeryq.dev/en/stable/getting-started/backends-and-brokers/redis.html).
+
+Expired receiving uploads receive a new fenced owner: matching bytes produce a queued
+document plus job, missing bytes become `upload_incomplete`, and mismatched bytes become
+`storage_integrity`. Storage outages are deferred up to 15 minutes after reservation.
+Cleanup inspects at most 100 storage entries per pass using incremental cursors. Partial
+files older than ten minutes require an exclusive nonblocking advisory lock; live writers
+hold that lock through publication/unlink. Objects older than 24 hours require a fresh
+database check showing no reference or terminal `upload_incomplete`. Receiving, queued,
+accepted, rejected and other failed documents retain their objects. Database/listing
+failure stops cleanup; immutable server keys are never reused. Shared S3/DB transactions
+and automatic removal of rejected files are not claimed.
+
+To run the full isolated verification, **Windows PowerShell**:
+
+```powershell
+.\scripts\check-backend.ps1
+git diff --check
+```
+
+Expected: pytest reports no failures; `Real HTTP/Redis/worker processing phase verified`
+appears for validation, broker outage/recovery, message loss/recovery, claimed-worker
+interruption/recovery and storage-failure exhaustion/explicit retry. Existing queued-upload
+persistence, synthetic token/workspace permissions, manual-record snapshots, migrations
+and health/readiness outage checks also run. Finally the unique disposable containers,
+network, document/PostgreSQL volumes and generated settings are removed. The checker
+uses generated fictional files and synthetic signing keys, never real Cognito, AWS,
+actual environment files or development storage/database. CI runs the same phases.
+
+Focused PostgreSQL tests use independent connections for claims and stale ownership;
+parser tests use actual Linux subprocesses with no network. Integration uses actual
+HTTP, Redis delivery, dispatcher and prefork worker, never eager mode. Only the guarded
+checker accelerates stored fixture timestamps to avoid waiting 120/180-second leases
+and retry cooldowns; focused tests verify real configured intervals. A test-only worker
+entrypoint gates a fixture after its real claim for deterministic interruption, with
+database/project guards before activation. Controlled unit faults remain distinct from
+these process-level checks.
+
+Dependencies added: Celery Redis extra **5.7.0**, Pillow **13.0.0**, pypdf **6.21.4**
+and their locked transitive dependencies. Existing 43 package versions are preserved.
+Local checks incur no AWS charges; real S3 setup/pricing/verification stays Step 5.6.
+Step 5.5 frontend work remains pending. Online GitHub execution and real identity/cloud
+integration are separate from this disposable local verification.
+
+This portfolio setup retains the backend image's root user, so Celery reports its
+standard superuser warning. Container-user/volume ownership hardening, malware
+scanning, production quotas, backup/restore and retention operations are not supplied
+by this milestone. Parser containment and private local storage do not establish a
+production financial-data service.

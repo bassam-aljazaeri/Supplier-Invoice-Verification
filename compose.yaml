@@ -2,6 +2,7 @@ name: supplier-invoice-verification
 
 services:
   api:
+    image: ${COMPOSE_PROJECT_NAME:-supplier-invoice-verification}-api
     build:
       context: ./backend
     environment:
@@ -25,6 +26,50 @@ services:
       - document_data:/var/lib/supplier-invoice-verification/documents
     tmpfs:
       - /tmp/siv-documents:size=32m,mode=0700
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    profiles: [processing]
+    image: ${COMPOSE_PROJECT_NAME:-supplier-invoice-verification}-api
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.document_worker"]
+    mem_limit: 512m
+    environment: &processing-environment
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      DOCUMENT_STORAGE_BACKEND: local
+      DOCUMENT_STORAGE_ROOT: /var/lib/supplier-invoice-verification/documents
+      DOCUMENT_TEMP_ROOT: /tmp/siv-documents
+    volumes:
+      - document_data:/var/lib/supplier-invoice-verification/documents
+    tmpfs:
+      - /tmp/siv-documents:size=32m,mode=0700
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dispatcher:
+    profiles: [processing]
+    image: ${COMPOSE_PROJECT_NAME:-supplier-invoice-verification}-api
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.dispatch_documents"]
+    mem_limit: 256m
+    environment: *processing-environment
+    volumes:
+      - document_data:/var/lib/supplier-invoice-verification/documents
     depends_on:
       db:
         condition: service_healthy

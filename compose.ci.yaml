@@ -13,3 +13,8 @@ services:
       COGNITO_REGION: eu-west-1
       COGNITO_USER_POOL_ID: eu-west-1_EXAMPLE
       COGNITO_APP_CLIENT_ID: syntheticclient
+  worker:
+    command: ["python", "-m", "tests.run_document_worker"]
+    environment:
+      RUN_POSTGRES_TESTS: "1"
+      POSTGRES_TEST_PROJECT: ${COMPOSE_PROJECT_NAME:?Use an isolated check or CI project}
