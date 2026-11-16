@@ -1417,11 +1417,11 @@ no symlink traversal, and atomic exclusive publication. User filenames are
 display basenames, never storage paths. Identical file bytes are not treated as
 duplicate business invoices or deduplicated across workspaces.
 
-Trusted API process configuration (Compose supplies these fixed local values):
+Trusted process configuration (shared by API, worker and dispatcher):
 
 | Setting | Local value/purpose |
 | --- | --- |
-| `DOCUMENT_STORAGE_BACKEND` | `local`; unsupported modes fail closed rather than selecting a fallback. There is no S3 implementation or AWS credential lookup in this step. |
+| `DOCUMENT_STORAGE_BACKEND` | Defaults to `local`. Step 5.6A adds explicit `s3`; unsupported/misconfigured modes fail closed without a fallback. Local mode never initializes an AWS client. |
 | `DOCUMENT_STORAGE_ROOT` | `/var/lib/supplier-invoice-verification/documents`; private named-volume root. Direct API process configurations must use an absolute Linux path without symlinks. |
 | `DOCUMENT_TEMP_ROOT` | `/tmp/siv-documents`; Compose supplies a 32 MiB private tmpfs. Incoming temporary files are unlinked/closed on success, rejection, timeout, or cancellation. |
 
@@ -1429,8 +1429,9 @@ At most four uploads run per API process. Completed objects survive API/containe
 restart while the named volume is retained. Deleting that volume loses private
 files; do not use volume deletion as routine recovery. This is single-host local
 storage, not S3 policy/encryption/durability verification or a production
-financial-data service. Real S3 configuration, Boto3, pricing, and controlled
-verification remain Step 5.6. No AWS call or resource is needed here.
+financial-data service. Optional S3 configuration and offline verification are now
+available in [Step 5.6A](#optional-private-s3-storage-step-56a). Live AWS setup,
+pricing review and integration verification remain Step 5.6B.
 
 The CI override retains only its own project-scoped document volume, removes
 the development source mount and API host ports, and uses the existing synthetic
@@ -1700,9 +1701,9 @@ Abort signals and generation guards both prevent obsolete results from restoring
 Accepted downloads request a fresh short-lived local grant, fetch the local-content
 route with current bearer/workspace headers, and trigger an attachment with the API's
 generated document filename. Blob URLs are revoked on completion/navigation/unmount.
-Tickets are never rendered, persisted or logged by the client; external delivery
-targets are rejected before a second fetch, so no app credentials go to storage URLs.
-S3 delivery remains Step 5.6. Vite proxy failures log a fixed message rather than
+Tickets are never rendered, persisted or logged by the client. Step 5.6A also accepts
+S3 grants only for the explicitly configured HTTPS origin, opened by browser
+navigation with no app headers; see below. Vite proxy failures log a fixed message rather than
 the private request URL/Error. Keep `DEBUG`, `NODE_DEBUG` and HTTP/proxy debug logging
 disabled while handling documents; production access logs must also exclude tickets.
 No token or file bytes enter localStorage/sessionStorage/IndexedDB; the existing
@@ -1795,5 +1796,98 @@ Manual browser checklist (not performed by the automated tests):
    resume. If an upload response is uncertain, use Check upload status before an
    explicit same-attempt resend.
 
-Stop after Step 5.5. Real S3 setup/verification, OCR/extraction, matching, approvals,
-exports and later deployment/merge work are outside this change.
+The local Step 5.5 browser walkthrough is complete; evidence is in progress.md.
+
+## Optional private S3 storage (Step 5.6A)
+
+Local storage remains the development/CI default. Do not change the storage mode
+of an existing database: its rows contain adapter-specific references, and this
+step supplies no file migration or mixed-backend lookup. Use a fresh isolated
+database/project and a dedicated S3 test prefix for the later live exercise.
+
+| Process setting | Explicit S3 value |
+| --- | --- |
+| `DOCUMENT_STORAGE_BACKEND` | `s3` on API, worker and dispatcher |
+| `DOCUMENT_S3_BUCKET` | Private general-purpose bucket; DNS name with no dots, access-point alias or directory-bucket suffix |
+| `DOCUMENT_S3_REGION` | Exact commercial AWS region, for example `eu-west-1`; no GovCloud/China/custom endpoints in this adapter |
+| `DOCUMENT_S3_PREFIX` | Dedicated prefix ending `/`, for example `siv-smoke/run-unique/documents/`; 1-4 segments of 1-64 letters/digits/underscore/hyphen each |
+| `VITE_DOCUMENT_S3_ORIGIN` | Public browser configuration, exactly `https://BUCKET.s3.REGION.amazonaws.com`, without trailing slash, path, port or query; restart/rebuild Vite after changing it |
+
+The AWS SDK credential chain runs only in server processes in explicit S3 mode.
+Compose does not forward host AWS credentials or mount credential files. Supply a
+workload role or an operator-provisioned, read-only temporary credential chain to
+all three processes for Step 5.6B; never put credentials in Vite settings, Git,
+examples or logs. [The isolated smoke setup and restricted policies](docs/s3-storage.md)
+give the exact configuration and later operator commands. No AWS resources or live
+AWS calls are needed for Step 5.6A.
+
+Uploads use one `PutObject`, `IfNoneMatch="*"`, explicit SHA-256 and SSE-S3
+`AES256`; no ACL or multipart transfer. A precondition conflict is a replay only
+after a bounded GET matches the recorded size and SHA-256. ETags and object
+metadata are never treated as the application's digest. Concurrent-write conflicts,
+access denial and outages fail safely without overwriting bytes. SDK calls use
+two-second connection/read timeouts and one attempt; wrong-region redirects are
+blocked. Reads enforce the 5 MB limit and check a 15-second operation deadline
+between chunks. API storage awaits retain the existing 15-second limit and late
+upload writers retain their upload slot. Network/credential-chain behavior still
+needs live verification. See the [AWS conditional-write contract](https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/put_object.html).
+
+Receiving-upload reconciliation still hashes bytes and uses database ownership to
+finalize or close expired reservations. Job dispatch/recovery is unchanged.
+**S3 orphan listing and deletion are disabled**, including direct adapter deletion:
+a database reference check cannot lock out a delayed remote writer or fence an
+S3 delete like the local inode/advisory-lock checks. This prevents cleanup from
+deleting active/finalized S3 uploads but can retain abandoned objects indefinitely.
+Keep all local cleanup behavior. Later operator cleanup must stop writers, review
+the isolated test manifest and remove only those designated test objects; do not
+apply a broad lifecycle expiration to a prefix containing accepted documents.
+
+Accepted-only grants check current user/workspace access and scoped status before
+storage access/signing. S3 grants are SigV4 GET links for at most 60 seconds (the
+signing credentials can expire sooner), with attachment filename, detected MIME
+type and `no-store` response overrides. A link already issued can remain usable
+until expiry after membership removal; new grants are denied. The client validates
+document/workspace/delivery and the exact configured S3 origin, then uses a temporary
+anchor with `noopener noreferrer` and `no-referrer`. It never sends the app token or
+workspace headers to S3, fetches external bytes, renders the signed URL or saves it
+in application storage. The authenticated local GET/blob download stays separate.
+No CORS policy is needed for this S3 navigation flow. Keep SDK, HTTP, proxy and
+browser debug/query logging disabled. [AWS explains presigned-link lifetime](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html).
+
+Repeat offline verification from the repository root in **Windows PowerShell**:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-backend.ps1
+if ($LASTEXITCODE -ne 0) { throw 'Disposable backend checks failed' }
+Push-Location .\frontend
+$s3CheckPreviousFlag = $env:SIV_NO_ENV_FILES
+try {
+    $env:SIV_NO_ENV_FILES = '1'
+    npm.cmd test
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed' }
+    npm.cmd run lint
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend lint failed' }
+    npm.cmd run build
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
+} finally {
+    $env:SIV_NO_ENV_FILES = $s3CheckPreviousFlag
+    Pop-Location
+}
+git diff --check
+if ($LASTEXITCODE -ne 0) { throw 'Whitespace check failed' }
+```
+
+The PowerShell checker runs Python/pytest and real HTTP/PostgreSQL/Redis/worker
+checks inside **Linux containers**, with generated settings and disposable volumes.
+`compose.ci.yaml` forces local mode for all three processes regardless of inherited
+S3 mode. S3 tests inject Botocore Stubber or controlled in-memory clients, synthetic
+credentials and null SDK config/credential paths; SDK HTTP is blocked or replaced
+by a controlled transport. These are **simulated S3 tests**, not an AWS integration
+test. The checker does not switch or inspect development storage/database.
+
+Added backend dependency: Boto3 **1.44.3**, with Botocore **1.44.3**, JMESPath
+**1.1.0**, s3transfer **0.19.3**, urllib3 **2.8.0** locked in `backend/uv.lock`.
+Prior locked package versions are preserved. Frontend dependencies/lockfile and
+database migrations are unchanged. Actual results are in [progress](docs/progress.md).
+Stop after Step 5.6A: real AWS setup/testing is Step 5.6B; no Textract/OCR or later
+milestone work is included.

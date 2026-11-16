@@ -9,6 +9,7 @@ import { useSave } from '../../hooks/useBusiness.ts'
 import type { SaveFeedback } from '../../hooks/useBusiness.ts'
 import RequestState from '../../components/RequestState.tsx'
 import { ApiFailure } from '../../api.ts'
+import { openExternalDownload } from '../../documentDownloads.ts'
 
 export function DocumentActions({ record, refresh }: { record: DocumentRecord; refresh: () => void }) {
   const canRetry = useCanCreate()
@@ -29,7 +30,8 @@ export function DocumentActions({ record, refresh }: { record: DocumentRecord; r
       {feedback.error.uncertainWrite && <p>The processing retry may already be queued. Refresh status before choosing another action. The original file will not be uploaded again.</p>}
       <button type="button" onClick={refresh}>Refresh status</button>
     </div>}
-    {record.state === 'accepted' && <><p>Download an attachment. A fresh short-lived authorization is requested for each download; there is no inline preview.</p><button type="button" disabled={feedback.pending} onClick={() => { void save((signal) => downloadDocument(record, { signal }), (download) => {
+    {record.state === 'accepted' && <><p>Download an attachment. A fresh short-lived authorization is requested each time. A storage link already issued can remain usable until expiry, even if workspace access changes.</p><button type="button" disabled={feedback.pending} onClick={() => { void save((signal) => downloadDocument(record, { signal }), (download) => {
+      if (download.delivery === 's3_presigned') { openExternalDownload(download.url); return }
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
       if (releaseTimer.current) clearTimeout(releaseTimer.current)
       objectUrl.current = null; releaseTimer.current = null

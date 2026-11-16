@@ -1,11 +1,20 @@
 name: supplier-invoice-verification
 
+x-document-storage: &document-storage
+  DOCUMENT_STORAGE_BACKEND: ${DOCUMENT_STORAGE_BACKEND:-local}
+  DOCUMENT_STORAGE_ROOT: /var/lib/supplier-invoice-verification/documents
+  DOCUMENT_TEMP_ROOT: /tmp/siv-documents
+  DOCUMENT_S3_BUCKET: ${DOCUMENT_S3_BUCKET:-}
+  DOCUMENT_S3_REGION: ${DOCUMENT_S3_REGION:-}
+  DOCUMENT_S3_PREFIX: ${DOCUMENT_S3_PREFIX:-}
+
 services:
   api:
     image: ${COMPOSE_PROJECT_NAME:-supplier-invoice-verification}-api
     build:
       context: ./backend
     environment:
+      <<: *document-storage
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -16,9 +25,6 @@ services:
       COGNITO_REGION: ${COGNITO_REGION:-}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_APP_CLIENT_ID: ${COGNITO_APP_CLIENT_ID:-}
-      DOCUMENT_STORAGE_BACKEND: local
-      DOCUMENT_STORAGE_ROOT: /var/lib/supplier-invoice-verification/documents
-      DOCUMENT_TEMP_ROOT: /tmp/siv-documents
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -40,6 +46,7 @@ services:
     command: ["python", "-m", "app.document_worker"]
     mem_limit: 512m
     environment: &processing-environment
+      <<: *document-storage
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -47,9 +54,6 @@ services:
       POSTGRES_PORT: "5432"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      DOCUMENT_STORAGE_BACKEND: local
-      DOCUMENT_STORAGE_ROOT: /var/lib/supplier-invoice-verification/documents
-      DOCUMENT_TEMP_ROOT: /tmp/siv-documents
     volumes:
       - document_data:/var/lib/supplier-invoice-verification/documents
     tmpfs:

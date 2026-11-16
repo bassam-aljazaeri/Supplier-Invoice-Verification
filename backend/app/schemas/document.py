@@ -38,7 +38,7 @@ DocumentList = RecordList[DocumentRead]
 class DocumentDownload(BaseModel):
     document_id: UUID
     workspace_id: UUID
-    delivery: Literal["local_authenticated"]
+    delivery: Literal["local_authenticated", "s3_presigned"]
     url: str
     expires_at: datetime
 

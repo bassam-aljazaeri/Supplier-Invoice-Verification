@@ -7,7 +7,7 @@ import threading
 
 from app.api.errors import unavailable
 from app.storage import StorageError, StoredObject
-from app.storage.local import LocalDocumentStorage
+from app.storage.factory import configured_storage
 
 STORAGE_WAIT = 15
 
@@ -23,10 +23,8 @@ class DocumentRuntime:
     def get_storage(self):
         with self._lock:
             if self.storage is None:
-                if os.getenv("DOCUMENT_STORAGE_BACKEND", "local") != "local":
-                    raise unavailable()
                 try:
-                    self.storage = LocalDocumentStorage(os.getenv("DOCUMENT_STORAGE_ROOT", "/var/lib/supplier-invoice-verification/documents"))
+                    self.storage = configured_storage()
                 except StorageError:
                     raise unavailable() from None
             return self.storage

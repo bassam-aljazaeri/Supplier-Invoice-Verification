@@ -108,8 +108,11 @@ async def upload_document(request: Request, session: SessionDependency, user: Us
             if reservation.verify_object:
                 await storage_call(verify_object, storage, reservation.storage_key, received.size, received.sha256)
             return queued_response(reservation.result, 200 if reservation.result.state in service.TERMINAL else 202)
-        # The writer owns a separate descriptor even if the HTTP request times out.
-        clone = os.fdopen(os.dup(received.file.fileno()), "rb")
+        # Reopen the anonymous Linux file with an independent offset. dup() shares
+        # its offset with BufferedRandom: an SDK seek followed by early failure
+        # could otherwise make closing the receive buffer seek below zero.
+        # The writer retains its descriptor even after the HTTP request times out.
+        clone = os.fdopen(os.open(f"/proc/self/fd/{received.file.fileno()}", os.O_RDONLY), "rb")
 
         def write_private():
             with clone:
@@ -162,11 +165,11 @@ async def retry_document(id: UUID, request: Request, session: SessionDependency,
 @read_post
 async def download_url(id: UUID, request: Request, session: SessionDependency, user: UserDependency, workspace_id: WorkspaceDependency):
     caller_id = user.id
-    key, size, digest, _ = await run_in_threadpool(service.stored_reference, session, workspace_id, id, accepted=True)
+    key, size, digest, detected_type = await run_in_threadpool(service.stored_reference, session, workspace_id, id, accepted=True)
     storage = request.app.state.documents.get_storage()
     await storage_call(verify_object, storage, key, size, digest)
-    grant = storage.download_grant(id, workspace_id, caller_id, 60)
-    return DocumentDownload(document_id=id, workspace_id=workspace_id, delivery="local_authenticated", url=grant.url, expires_at=grant.expires_at)
+    grant = await storage_call(lambda: storage.download_grant(id, workspace_id, caller_id, 60, storage_key=key, detected_type=detected_type))
+    return DocumentDownload(document_id=id, workspace_id=workspace_id, delivery=grant.delivery, url=grant.url, expires_at=grant.expires_at)
 
 
 def read_content(storage, reference):

@@ -1,9 +1,9 @@
-"""Private storage boundary. No AWS client or network fallback in local mode."""
+"""Private storage boundary. Local mode never initializes an AWS client."""
 
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Literal, Protocol
 from uuid import UUID
 
 
@@ -42,6 +42,7 @@ class StorageCandidate:
 class DownloadGrant:
     url: str
     expires_at: datetime
+    delivery: Literal["local_authenticated", "s3_presigned"] = "local_authenticated"
 
 
 class DocumentStorage(Protocol):
@@ -51,5 +52,6 @@ class DocumentStorage(Protocol):
     def delete(self, key: str) -> None: ...
     def cleanup_candidates(self) -> list[StorageCandidate]: ...
     def delete_candidate(self, candidate: StorageCandidate, older_than: float) -> bool: ...
-    def download_grant(self, document_id: UUID, workspace_id: UUID, caller_id: UUID, expires_in: int) -> DownloadGrant: ...
+    def download_grant(self, document_id: UUID, workspace_id: UUID, caller_id: UUID, expires_in: int, *, storage_key: str, detected_type: str) -> DownloadGrant: ...
     def verify_ticket(self, ticket: str, document_id: UUID, workspace_id: UUID, caller_id: UUID) -> bool: ...
+    def close(self) -> None: ...

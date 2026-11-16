@@ -413,3 +413,63 @@ def test_receiving_replay_and_conflict_never_delete_winning_upload(concurrent_do
             release.set()
         assert first.result().status_code == 202
     assert len(list((storage.root / "objects").iterdir())) == 1
+
+
+@pytest.mark.parametrize("role", ["doc-admin", "doc-accountant", "doc-approver"])
+def test_s3_grants_require_scoped_accepted_record_and_current_membership(document_api, schema_session, role):
+    from app.models import WorkspaceMembership
+    from app.storage.s3 import S3DocumentStorage
+    from tests.s3_helpers import BUCKET, REGION, PREFIX, FakeS3
+    client, _, workspaces, users, headers = document_api
+    fake = FakeS3()
+    client.app.state.documents.storage = S3DocumentStorage(BUCKET, REGION, PREFIX, client=fake)
+    key = uuid4()
+    first = upload(client, key)
+    assert first.status_code == 202
+    identifier = first.json()["id"]
+    assert upload(client, key).json()["id"] == identifier and fake.calls == ["put", "get"]
+    assert client.post(f"/documents/{identifier}/download-url", headers=headers[role]).status_code == 409
+    terminal(schema_session, identifier)
+    fake.calls.clear()
+    # Unauthorized/scoped absence must fail before any object read or signing.
+    assert client.post(f"/documents/{identifier}/download-url", headers=headers["doc-outsider"]).status_code == 404
+    assert client.post(f"/documents/{identifier}/download-url", headers={**headers["doc-outsider"], "X-Workspace-ID": str(workspaces[0].id)}).status_code == 403
+    assert fake.calls == []
+    result = client.post(f"/documents/{identifier}/download-url", headers=headers[role])
+    assert result.status_code == 200 and result.headers["cache-control"] == "no-store"
+    grant = result.json()
+    assert grant["delivery"] == "s3_presigned" and grant["document_id"] == identifier
+    assert grant["url"].startswith(f"https://{BUCKET}.s3.{REGION}.amazonaws.com/{PREFIX}")
+    assert fake.calls == ["get", "presign"]
+    fake.calls.clear()
+    assert client.get(f"/documents/{identifier}/local-content?ticket=synthetic", headers=headers[role]).status_code == 403
+    assert not fake.calls
+    schema_session.execute(delete(WorkspaceMembership).where(WorkspaceMembership.application_user_id == users[role]))
+    schema_session.commit()
+    assert client.post(f"/documents/{identifier}/download-url", headers=headers[role]).status_code == 403
+    assert not fake.calls
+
+
+@pytest.mark.parametrize("code", ["NoSuchKey", "AccessDenied", "InternalError"])
+def test_s3_storage_failures_keep_bytes_private_and_errors_sanitized(document_api, schema_session, code, caplog):
+    from botocore.exceptions import ClientError
+    from app.storage.s3 import S3DocumentStorage
+    from tests.s3_helpers import BUCKET, REGION, PREFIX, FakeS3
+    client = document_api[0]
+    fake = FakeS3()
+    client.app.state.documents.storage = S3DocumentStorage(BUCKET, REGION, PREFIX, client=fake)
+    identifier = upload(client).json()["id"]
+    terminal(schema_session, identifier)
+    fake.failure = ClientError({"Error": {"Code": code, "Message": "fictional-private-diagnostic"}}, "GetObject")
+    fake.calls.clear()
+    result = client.post(f"/documents/{identifier}/download-url")
+    assert result.status_code == 503 and fake.calls == ["get"]
+    assert "fictional-private-diagnostic" not in result.text + caplog.text
+    fake.calls.clear()
+    assert upload(client).status_code == 503
+    assert fake.calls == ["put"]
+    assert schema_session.scalar(select(func.count()).select_from(Document).where(Document.state == "receiving")) == 1
+    assert not list(client.app.state.documents.temp_dir.iterdir())
+    assert client.app.state.documents.slots._value == 4
+    fake.failure = None
+    assert upload(client).status_code == 202

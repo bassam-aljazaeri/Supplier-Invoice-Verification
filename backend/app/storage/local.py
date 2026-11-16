@@ -15,15 +15,7 @@ import time
 from uuid import UUID, uuid4
 
 from app.storage import DownloadGrant, StorageCandidate, StorageError, StorageIntegrity, StorageMissing, StorageUnavailable, StoredObject
-
-MAX_FILE_SIZE = 5000000
-CHUNK_SIZE = 65536
-STORAGE_TIMEOUT = 15
-KEY_PATTERN = re.compile(r"d-[0-9a-f]{32}-[0-9a-f]{32}-[0-9a-f]{32}\Z")
-
-
-def new_key(workspace_id: UUID, document_id: UUID) -> str:
-    return f"d-{workspace_id.hex}-{document_id.hex}-{uuid4().hex}"
+from app.storage.keys import CHUNK_SIZE, KEY_PATTERN, MAX_FILE_SIZE, STORAGE_TIMEOUT, check_key, new_key
 
 
 class BoundedReader:
@@ -76,8 +68,7 @@ class LocalDocumentStorage:
 
     @staticmethod
     def _key(key):
-        if not isinstance(key, str) or KEY_PATTERN.fullmatch(key) is None:
-            raise StorageIntegrity()
+        check_key(key)
 
     @contextmanager
     def open_bounded(self, key, max_bytes):
@@ -228,7 +219,7 @@ class LocalDocumentStorage:
             except FileNotFoundError:
                 pass
 
-    def download_grant(self, document_id, workspace_id, caller_id, expires_in=60):
+    def download_grant(self, document_id, workspace_id, caller_id, expires_in=60, *, storage_key=None, detected_type=None):
         if not 1 <= expires_in <= 60:
             raise StorageIntegrity()
         expiry = int(time.time()) + expires_in

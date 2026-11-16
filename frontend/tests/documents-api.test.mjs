@@ -4,9 +4,10 @@ import { ApiFailure, configurePrivateRequests } from '../src/api.ts'
 import { downloadDocument, getDocument, getDocuments, localDownloadPath, retryDocument, uploadDocument, validateDocumentFile } from '../src/documentApi.ts'
 import { attemptKey, documentId, documentRecord, fictionalFile, grant } from './document-fixtures.mjs'
 import { deferred, otherWorkspaceId, page, workspaceId } from './auth-fixtures.mjs'
+import { configureDocumentDownloads, externalDownloadUrl, openExternalDownload, s3DownloadOrigin } from '../src/documentDownloads.ts'
 
 beforeEach(() => configurePrivateRequests({ workspaceId, accessToken: async () => 'synthetic-access-token', onFailure: () => {} }))
-afterEach(() => configurePrivateRequests(null))
+afterEach(() => { configurePrivateRequests(null); configureDocumentDownloads(null) })
 const accepted = () => documentRecord({ state: 'accepted', detected_type: 'pdf', finished_at: '2026-11-14T12:00:00Z' })
 
 test('upload sends exactly file multipart with browser boundary, bearer, workspace, key and 202 metadata', async (t) => {
@@ -155,13 +156,87 @@ test('uncertain processing retry sends one POST and can be recovered with a stat
   assert.deepEqual(methods, ['POST', 'GET'])
 })
 
-test('unimplemented external delivery and mismatched grant ownership never request bytes', async (t) => {
+test('unconfigured external delivery and mismatched grant ownership never request bytes', async (t) => {
   for (const value of [grant({ delivery: 's3_presigned' }), grant({ workspace_id: otherWorkspaceId }), grant({ document_id: attemptKey })]) {
     let calls = 0
     t.mock.method(globalThis, 'fetch', async () => { calls++; return Response.json(value) })
     await assert.rejects(downloadDocument(accepted()), (error) => error.kind === 'invalid-response')
     assert.equal(calls, 1)
   }
+})
+
+const s3Origin = 'https://siv-fictional-test.s3.eu-west-1.amazonaws.com'
+const signedUrl = `${s3Origin}/isolated/documents/fictional?X-Amz-Signature=synthetic`
+test('configured S3 grant makes only the authenticated grant request and never fetches external bytes', async (t) => {
+  configureDocumentDownloads(s3Origin)
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push(url)
+    assert.equal(url, `/api/documents/${documentId}/download-url`)
+    assert.equal(options.headers.Authorization, 'Bearer synthetic-access-token')
+    return Response.json(grant({ delivery: 's3_presigned', url: signedUrl }))
+  })
+  assert.deepEqual(await downloadDocument(accepted()), { delivery: 's3_presigned', url: signedUrl })
+  assert.equal(calls.length, 1)
+})
+
+test('external grant ownership and delivery cannot bypass the configured origin check', async (t) => {
+  configureDocumentDownloads(s3Origin)
+  for (const value of [grant({ delivery: 's3_presigned', url: signedUrl, document_id: attemptKey }),
+    grant({ delivery: 's3_presigned', url: signedUrl, workspace_id: otherWorkspaceId }),
+    grant({ delivery: 'local_authenticated', url: signedUrl }), grant({ delivery: 'unknown', url: signedUrl })]) {
+    let calls = 0
+    t.mock.method(globalThis, 'fetch', async () => { calls++; return Response.json(value) })
+    await assert.rejects(downloadDocument(accepted()), (error) => error.kind === 'invalid-response')
+    assert.equal(calls, 1)
+  }
+})
+
+test('unexpected external destinations fail before any browser navigation or external fetch', async (t) => {
+  configureDocumentDownloads(s3Origin)
+  for (const url of ['http:' + signedUrl.slice(6), '//siv-fictional-test.s3.eu-west-1.amazonaws.com/x?s=x',
+    signedUrl.replace('.com/', '.com.evil.invalid/'), signedUrl.replace('https://', 'https://user@'),
+    signedUrl.replace('.com/', '.com:443/'), signedUrl + '#fragment', signedUrl.replace('/isolated', '\\isolated'),
+    'https://other-bucket.s3.eu-west-1.amazonaws.com/file?signature=x', '/api/documents/x/local-content?ticket=x']) {
+    let calls = 0
+    t.mock.method(globalThis, 'fetch', async () => { calls++; return Response.json(grant({ delivery: 's3_presigned', url })) })
+    await assert.rejects(downloadDocument(accepted()), (error) => error.kind === 'invalid-response')
+    assert.equal(calls, 1)
+    assert.throws(() => externalDownloadUrl(url), ApiFailure)
+  }
+})
+
+test('external origin must be an explicit supported HTTPS S3 origin without path, port or query', () => {
+  for (const value of [null, '', 'https://storage.example.invalid', s3Origin + '/', s3Origin + ':443', s3Origin + '?x=y', s3Origin.replace('https:', 'http:')]) assert.equal(s3DownloadOrigin(value), null)
+  assert.equal(s3DownloadOrigin(s3Origin), s3Origin)
+})
+
+test('S3 navigation uses a disposable anchor with no opener, referrer or app headers', (t) => {
+  configureDocumentDownloads(s3Origin)
+  const actions = [], link = { click() { actions.push('click') }, remove() { actions.push('remove') } }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  Object.defineProperty(globalThis, 'document', { value: { createElement: (tag) => { assert.equal(tag, 'a'); return link }, body: { append: (element) => { assert.equal(element, link); actions.push('append') } } }, configurable: true })
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'document', previous); else delete globalThis.document })
+  t.mock.method(globalThis, 'fetch', () => assert.fail('S3 navigation must never fetch'))
+  openExternalDownload(signedUrl)
+  assert.equal(link.href, signedUrl); assert.equal(link.target, '_blank')
+  assert.equal(link.rel, 'noopener noreferrer'); assert.equal(link.referrerPolicy, 'no-referrer')
+  assert.deepEqual(actions, ['append', 'click', 'remove'])
+  assert.equal(link.headers, undefined)
+  assert.throws(() => openExternalDownload('https://evil.invalid/file?x=y'), ApiFailure)
+  assert.deepEqual(actions, ['append', 'click', 'remove'])
+})
+
+test('workspace change or cancellation while obtaining an external grant prevents delivery', async (t) => {
+  configureDocumentDownloads(s3Origin)
+  let calls = 0
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++
+    configurePrivateRequests({ workspaceId: otherWorkspaceId, accessToken: async () => 'other-token', onFailure: () => {} })
+    return Response.json(grant({ delivery: 's3_presigned', url: signedUrl }))
+  })
+  await assert.rejects(downloadDocument(accepted()), (error) => error.kind === 'cancelled')
+  assert.equal(calls, 1)
 })
 
 test('attachment body timeout cancels streaming and is never an uncertain write', async (t) => {

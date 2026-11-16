@@ -5,6 +5,7 @@ import { DEFAULT_PAGE, validPage } from './navigation.ts'
 import { isUuid } from './validation.ts'
 import { documentErrors, documentStates } from './documentTypes.ts'
 import type { DocumentRecord } from './documentTypes.ts'
+import { externalDownloadUrl } from './documentDownloads.ts'
 
 export const MAX_DOCUMENT_BYTES = 5000000
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -53,7 +54,7 @@ export function retryDocument(id: string, options: RequestOptions = {}) {
   return privateRequest(`/documents/${id}/retry`, (value): value is DocumentRecord => isDocument(value) && value.id === id, options, undefined, 'business', 'POST', { statuses: [202], uncertainServerError: true })
 }
 
-type LocalGrant = { document_id: string; workspace_id: string; delivery: 'local_authenticated'; url: string; expires_at: string }
+type DownloadGrant = { document_id: string; workspace_id: string; delivery: 'local_authenticated' | 's3_presigned'; url: string; expires_at: string }
 export function localDownloadPath(url: string, id: string) {
   const prefix = `/api/documents/${id}/local-content?`
   if (!url.startsWith(prefix) || /[\\\r\n#]/.test(url)) throw new ApiFailure('invalid-response', 'The download could not be prepared.')
@@ -65,15 +66,15 @@ export async function downloadDocument(record: DocumentRecord, options: RequestO
   if (record.state !== 'accepted') throw new ApiFailure('conflict', 'Only accepted documents can be downloaded.')
   assertId(record.id)
   const version = privateContextVersion()
-  const grant = await privateRequest(`/documents/${record.id}/download-url`, (value): value is LocalGrant => object(value)
-    && value.document_id === record.id && value.workspace_id === record.workspace_id && value.delivery === 'local_authenticated'
+  const grant = await privateRequest(`/documents/${record.id}/download-url`, (value): value is DownloadGrant => object(value)
+    && value.document_id === record.id && value.workspace_id === record.workspace_id && ['local_authenticated', 's3_presigned'].includes(value.delivery as string)
     && typeof value.url === 'string' && date(value.expires_at), options, undefined, 'business', 'POST', { statuses: [200], readOnly: true })
   if (version !== privateContextVersion()) throw new ApiFailure('cancelled', 'The request was interrupted.')
-  // This milestone accepts only the local authenticated contract. External targets
-  // are rejected before fetching; app credentials can never follow a storage URL.
+  if (options.signal?.aborted) throw new ApiFailure('cancelled', 'The request was interrupted.')
+  if (grant.delivery === 's3_presigned') return { delivery: 's3_presigned' as const, url: externalDownloadUrl(grant.url) }
   const path = localDownloadPath(grant.url, record.id)
   const mime = { pdf: 'application/pdf', jpeg: 'image/jpeg', png: 'image/png' }[record.detected_type!]
   const blob = await privateRequest(path, (value): value is Blob => value instanceof Blob && value.size === record.byte_size && value.type === mime, options, undefined, 'business', 'GET', { blob: { maximum: MAX_DOCUMENT_BYTES } })
   if (version !== privateContextVersion()) throw new ApiFailure('cancelled', 'The request was interrupted.')
-  return { blob, filename: `document-${record.id}.${record.detected_type === 'jpeg' ? 'jpg' : record.detected_type}` }
+  return { delivery: 'local_authenticated' as const, blob, filename: `document-${record.id}.${record.detected_type === 'jpeg' ? 'jpg' : record.detected_type}` }
 }

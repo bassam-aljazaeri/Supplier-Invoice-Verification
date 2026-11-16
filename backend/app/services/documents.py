@@ -12,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.errors import BusinessError, missing, unavailable
 from app.models import Document, DocumentJob
 from app.schemas.document import DocumentRead
-from app.storage.local import new_key
+from app.storage.keys import new_key
 
 RETRYABLE = {"storage_unavailable", "processing_interrupted", "processing_error"}
 WRITERS = {"administrator", "accountant"}

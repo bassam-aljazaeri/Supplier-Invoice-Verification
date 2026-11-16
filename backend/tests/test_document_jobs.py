@@ -217,6 +217,40 @@ def test_cleanup_keeps_live_and_completed_uploads_and_locked_partial(setup_jobs,
     storage.close()
 
 
+def test_s3_recovery_worker_and_disabled_cleanup_preserve_active_and_finalized_bytes(setup_jobs, tmp_path, monkeypatch):
+    from app.document_tasks import process_document
+    from app.storage.s3 import S3DocumentStorage
+    from tests.s3_helpers import BUCKET, REGION, PREFIX, FakeS3
+    jobs, add, _ = setup_jobs
+    monkeypatch.setenv("DOCUMENT_TEMP_ROOT", str(tmp_path))
+    fake = FakeS3()
+    storage = S3DocumentStorage(BUCKET, REGION, PREFIX, client=fake)
+    recovering, active, finalized = add("receiving"), add("receiving"), add()
+    for identity in (recovering, active, finalized):
+        with jobs.transaction() as s:
+            d = s.get(Document, identity)
+            storage.put_new(d.storage_key, BytesIO(png()), d.byte_size, d.sha256)
+            if identity == active:
+                d.upload_lease_until = jobs.clock(s) + timedelta(seconds=120)
+    original = dict(fake.objects)
+    Dispatcher(jobs, storage, publisher=lambda _: False).step()
+    with jobs.transaction() as s:
+        assert s.get(Document, recovering).state == "queued"
+        assert s.get(DocumentJob, recovering) is not None
+        assert s.get(Document, active).state == "receiving"
+    process_document(recovering, jobs=jobs, storage=storage)
+    process_document(finalized, jobs=jobs, storage=storage)
+    with jobs.transaction() as s:
+        assert s.get(Document, recovering).state == s.get(Document, finalized).state == "accepted"
+    # Even unreferenced and late-published objects are retained remotely.
+    orphan = new_key(uuid4(), uuid4())
+    storage.put_new(orphan, BytesIO(png()), len(png()), hashlib.sha256(png()).hexdigest())
+    original[PREFIX + orphan] = png()
+    Dispatcher(jobs, storage, publisher=lambda _: False).step()
+    assert fake.objects == original
+    assert set(fake.calls) <= {"get", "put"}
+
+
 @pytest.mark.parametrize("result,aged,expected,code", [
     ("integrity", False, "failed", "storage_integrity"),
     ("unavailable", False, "receiving", None),
