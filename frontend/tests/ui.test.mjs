@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer, loadConfigFromFile } from 'vite'
 import { me, membership, workspaceId } from './auth-fixtures.mjs'
 
-let server, context, components, originalWindow
+let server, context, components, documentViews, originalWindow
 before(async () => {
   const root = fileURLToPath(new URL('../', import.meta.url))
   const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, root + 'vite.config.ts')
@@ -21,6 +21,11 @@ before(async () => {
     '/src/pages/suppliers/SupplierListPage.tsx', '/src/pages/purchase-orders/PurchaseOrderListPage.tsx',
     '/src/pages/deliveries/DeliveryListPage.tsx', '/src/pages/invoices/InvoiceListPage.tsx',
   ].map(async (path) => (await server.ssrLoadModule(path)).default))
+  documentViews = {
+    list: (await server.ssrLoadModule('/src/pages/documents/DocumentListPage.tsx')).default,
+    upload: (await server.ssrLoadModule('/src/pages/documents/DocumentUploadPage.tsx')).default,
+    ...(await server.ssrLoadModule('/src/pages/documents/DocumentDetailPage.tsx')),
+  }
   originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
   Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { hash: '#/suppliers' } } })
 })
@@ -68,4 +73,46 @@ test('workspace selector uses only accessible memberships and displays current r
   assert.match(html, /Current role: <strong>approver/)
   assert.match(html, new RegExp(workspaceId))
   assert.doesNotMatch(html, /00000000-0000-4000-8000-000000000001/)
+})
+
+const fictionalDocument = {
+  id: '80000000-0000-4000-8000-000000000011', workspace_id: workspaceId, uploader_id: '50000000-0000-4000-8000-000000000011',
+  original_filename: 'fictional-invoice.pdf', byte_size: 2048, detected_type: 'pdf', state: 'accepted',
+  error_code: null, can_retry: false, created_at: '2026-11-14T10:00:00Z', uploaded_at: '2026-11-14T10:00:00Z',
+  updated_at: '2026-11-14T10:00:00Z', finished_at: '2026-11-14T10:00:00Z',
+}
+
+test('Documents navigation is available to all selected-workspace members', () => {
+  for (const role of ['administrator', 'accountant', 'approver']) assert.match(markup(components[0], role, { route: { kind: 'document-list' } }), /href="#\/documents" aria-current="page"/)
+  assert.doesNotMatch(markup(components[0], undefined, { route: { kind: 'status' } }, []), /href="#\/documents"/)
+})
+
+test('document upload controls are rendered only for administrator/accountant and use one labelled file input', () => {
+  for (const role of ['administrator', 'accountant']) {
+    assert.match(markup(documentViews.list, role, { page: { limit: 20, offset: 0 } }), /href="#\/documents\/new"/)
+    const html = markup(documentViews.upload, role)
+    assert.match(html, /type="file"/); assert.match(html, /for="document-file"/)
+    assert.match(html, /Upload file/); assert.doesNotMatch(html, /multiple=""/)
+  }
+  assert.doesNotMatch(markup(documentViews.list, 'approver', { page: { limit: 20, offset: 0 } }), /href="#\/documents\/new"/)
+  assert.doesNotMatch(markup(documentViews.upload, 'approver'), /type="file"|Upload file/)
+})
+
+test('accepted download is available to every member role, never for queued/rejected/failed records', () => {
+  for (const role of ['administrator', 'accountant', 'approver']) assert.match(markup(documentViews.DocumentActions, role, { record: fictionalDocument, refresh() {} }), /Download accepted document/)
+  for (const state of ['receiving', 'queued', 'processing', 'rejected', 'failed']) assert.doesNotMatch(markup(documentViews.DocumentActions, 'administrator', { record: { ...fictionalDocument, state, can_retry: false }, refresh() {} }), /Download accepted document/)
+})
+
+test('processing retry requires both creating role and current backend eligibility', () => {
+  const record = { ...fictionalDocument, state: 'failed', error_code: 'storage_unavailable', can_retry: true }
+  for (const role of ['administrator', 'accountant']) assert.match(markup(documentViews.DocumentActions, role, { record, refresh() {} }), />Retry processing<\/button>/)
+  assert.doesNotMatch(markup(documentViews.DocumentActions, 'approver', { record, refresh() {} }), />Retry processing<\/button>/)
+  assert.doesNotMatch(markup(documentViews.DocumentActions, 'administrator', { record: { ...record, can_retry: false }, refresh() {} }), />Retry processing<\/button>/)
+})
+
+test('document metadata explains validation, renders safe fields and escapes filenames', () => {
+  const html = markup(documentViews.DocumentMetadata, 'approver', { record: { ...fictionalDocument, original_filename: '<script>fictional</script>.pdf' } })
+  assert.match(html, /does not mean an invoice was matched or approved/)
+  assert.match(html, /No invoice is created or linked automatically/)
+  assert.match(html, /&lt;script&gt;/); assert.doesNotMatch(html, /<script>|storage_key|local-content\?ticket|Bearer /)
 })

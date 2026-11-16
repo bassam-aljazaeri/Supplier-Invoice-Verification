@@ -18,6 +18,11 @@ test('empty hashes open Status and only implemented routes are recognized', () =
   assert.deepEqual(parseHash('#/invoices'), { kind: 'invoice-list', page: DEFAULT_PAGE })
   assert.deepEqual(parseHash('#/invoices/new'), { kind: 'invoice-new' })
   assert.deepEqual(parseHash(`#/invoices/${id}`), { kind: 'invoice-detail', id })
+  assert.deepEqual(parseHash('#/documents'), { kind: 'document-list', page: DEFAULT_PAGE })
+  assert.deepEqual(parseHash('#/documents/new'), { kind: 'document-new' })
+  assert.deepEqual(parseHash(`#/documents/${id}`), { kind: 'document-detail', id })
+  assert.deepEqual(parseHash('#/documents?limit=20&offset=40'), { kind: 'document-list', page: { limit: 20, offset: 40 } })
+  for (const hash of ['#/documents/bad', '#/documents/new?offset=20', `#/documents/${id}?limit=20`, '#/documents?offset=-1', '#/documents?limit=101', '#/documents?offset=1&offset=2', `#/documents?workspace_id=${id}`]) assert.equal(parseHash(hash).kind, 'not-found')
 })
 test('list and linked-supplier deep links retain pagination and filters', () => {
   assert.deepEqual(parseHash(listHash('purchase-orders', { limit: 20, offset: 40, supplier_id: id })), { kind: 'order-list', page: { limit: 20, offset: 40, supplier_id: id } })

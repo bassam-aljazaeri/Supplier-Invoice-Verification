@@ -19,10 +19,11 @@ See [browser setup and verification](#browser-login-and-workspaces-step-45) and
 The older Step 3 examples below describe business payloads; their requests now
 also require the authentication and workspace headers documented there.
 
-Step 5.3 adds authenticated document APIs and private local storage alongside
-the manual records. Successful uploads remain queued until Step 5.4; there is
-no document worker or Documents website page yet. See
-[private document APIs](#private-local-documents-step-53).
+Step 5.3 adds private document APIs and storage; Step 5.4 adds local background
+validation and recovery. Step 5.5 adds Documents pages for upload, status tracking,
+eligible processing retry and accepted-file attachment download. Documents remain
+separate from manual invoices. See [Documents website](#documents-website-step-55)
+and [private document APIs](#private-local-documents-step-53).
 
 For setup and the 10 ordered / 8 delivered / 10 invoiced demonstration, see
 [the demo guide](docs/demo.md) and [the seed instructions below](#repeatable-fictional-demo-step-36).
@@ -1641,7 +1642,7 @@ these process-level checks.
 Dependencies added: Celery Redis extra **5.7.0**, Pillow **13.0.0**, pypdf **6.21.4**
 and their locked transitive dependencies. Existing 43 package versions are preserved.
 Local checks incur no AWS charges; real S3 setup/pricing/verification stays Step 5.6.
-Step 5.5 frontend work remains pending. Online GitHub execution and real identity/cloud
+The Step 5.5 Documents website is described below. Online GitHub execution and real identity/cloud
 integration are separate from this disposable local verification.
 
 This portfolio setup retains the backend image's root user, so Celery reports its
@@ -1649,3 +1650,150 @@ standard superuser warning. Container-user/volume ownership hardening, malware
 scanning, production quotas, backup/restore and retention operations are not supplied
 by this milestone. Parser containment and private local storage do not establish a
 production financial-data service.
+
+## Documents website (Step 5.5)
+
+After sign-in and workspace selection, Documents appears beside Invoices.
+`#/documents?limit=20&offset=0` lists safe metadata, newest first, with Previous,
+Next and explicit refresh. `#/documents/new` accepts one fictional file, and
+`#/documents/{id}` supports deep links, status, authorized download and eligible
+processing retry. Filename/size/type/status and UTC timestamps are shown; no
+storage key or ticket is displayed. **Accepted means file validation passed. It
+does not mean an invoice was matched or approved.** No invoice is created or linked.
+
+Administrators/accountants can upload and explicitly retry eligible failed
+processing. Approvers can read metadata and download accepted files, with no
+upload/retry controls. The backend still enforces current membership and role.
+Rejected, queued, processing, receiving and failed file bytes cannot be downloaded.
+The existing manual-record pages and Cognito/session behavior are retained.
+
+Uploads use one `file` multipart field and one canonical UUID `Idempotency-Key`.
+The browser sets the multipart boundary. Early extension/MIME/byte checks provide
+feedback; the server/worker decides validity. The file limit remains **5,000,000
+bytes**, with single-page/unprotected PDF and single-frame image guidance. Only
+uploads use the 90-second request limit; document reads use five seconds.
+
+An uncertain upload response retains its File/key only in the current upload view.
+**Check upload status** uses the caller-scoped recovery GET. A found document opens
+its status page. An empty result does not exclude a late reservation: the UI waits
+a conservative full 90-second server window after the uncertain response before
+offering **Retry same upload**, using the original file/key. There is no automatic
+write replay. A new selection/new attempt gets a new key; a 409 does not silently
+replace the key. Navigation, reload, logout and workspace/session changes discard
+the selection and in-memory attempt. Inspect the original workspace's list before
+starting another upload if the previous outcome was uncertain.
+
+**Retry processing** is different: it requeues the existing stored file only when
+the backend's current `can_retry` hint is true and the caller can write. The backend
+rechecks its 60-second cooldown and one additional cycle. An uncertain retry response
+requires a status GET before another action; the browser does not repeat its POST.
+For an ineligible failure, refresh after the cooldown to check again; permanent
+rejection/integrity/incomplete-upload failures and exhausted budgets are not retryable.
+
+Only the visible detail view polls active receiving/queued/processing records, after
+each previous read finishes: three-second intervals for the first five reads, then
+five seconds, with at most 20 automatic reads/two minutes. Terminal states, errors,
+hidden tabs, navigation and session/workspace changes stop it. Returning to a hidden
+tab requires explicit Refresh status; after the cap, refresh performs a manual read.
+Abort signals and generation guards both prevent obsolete results from restoring data.
+
+Accepted downloads request a fresh short-lived local grant, fetch the local-content
+route with current bearer/workspace headers, and trigger an attachment with the API's
+generated document filename. Blob URLs are revoked on completion/navigation/unmount.
+Tickets are never rendered, persisted or logged by the client; external delivery
+targets are rejected before a second fetch, so no app credentials go to storage URLs.
+S3 delivery remains Step 5.6. Vite proxy failures log a fixed message rather than
+the private request URL/Error. Keep `DEBUG`, `NODE_DEBUG` and HTTP/proxy debug logging
+disabled while handling documents; production access logs must also exclude tickets.
+No token or file bytes enter localStorage/sessionStorage/IndexedDB; the existing
+sessionStorage allowance remains short-lived PKCE correlation only.
+
+For the existing configured services and database already at `0003_documents`,
+**Windows PowerShell**, from the repository root:
+
+```powershell
+docker compose --profile processing ps --all
+docker compose --profile processing logs --tail 60 api worker dispatcher
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/ready'
+```
+
+Expected: API, database, Redis, worker and dispatcher are running; health is `ok`,
+and readiness is `ready` with database/redis `ok`. These operator commands inspect
+the existing stack. **No migration or seed is needed for Step 5.5.**
+
+In a separate **Windows PowerShell** terminal, from the repository root:
+
+```powershell
+Set-Location .\frontend
+Remove-Item Env:SIV_NO_ENV_FILES -ErrorAction SilentlyContinue
+npm.cmd run dev
+```
+
+Expected: Vite serves **http://localhost:5173** and proxies `/api` to the existing
+API. Use `localhost` for the registered Cognito callback. Existing public browser
+configuration is reused; no new environment setting or dependency is required.
+The verification-only environment flag is removed here so your configured browser
+settings can load when you deliberately start Vite yourself.
+
+Repeat automated verification without loading actual environment files, from the
+repository root in **Windows PowerShell**:
+
+```powershell
+Push-Location .\frontend
+$documentCheckPreviousFlag = $env:SIV_NO_ENV_FILES
+try {
+    $env:SIV_NO_ENV_FILES = '1'
+    npm.cmd test
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed' }
+    npm.cmd run lint
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend lint failed' }
+    npm.cmd run build
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
+} finally {
+    $env:SIV_NO_ENV_FILES = $documentCheckPreviousFlag
+    Pop-Location
+}
+git diff --check
+```
+
+Expected: all frontend tests pass, ESLint/TypeScript/Vite exit successfully, and no
+whitespace errors. Tests use synthetic sessions/files, mocked document transports,
+controlled polling clocks and rendered React controls. A separate real loopback
+proxy-failure test uses its own disposable HTTP fixture, never the development API.
+These automated checks do not establish a real Cognito/browser upload/download pass.
+Actual results and outstanding manual checks are recorded in [progress](docs/progress.md).
+
+For a generated fictional one-page PDF, optionally run the following operator
+commands from the repository root. Python runs inside the **Linux API container**;
+this helper generates bytes and does not migrate, seed or query the database:
+
+```powershell
+$fictionalPdfBase64 = docker compose exec -T api python -c "from tests.document_helpers import pdf; import base64; print(base64.b64encode(pdf()).decode())"
+if ($LASTEXITCODE -ne 0) { throw 'Fictional PDF generation failed' }
+$fictionalPdfPath = Join-Path ([IO.Path]::GetTempPath()) 'Supplier-Invoice-Verification-fictional-invoice.pdf'
+[IO.File]::WriteAllBytes($fictionalPdfPath, [Convert]::FromBase64String(($fictionalPdfBase64 -join '')))
+$fictionalPdfPath
+```
+
+Manual browser checklist (not performed by the automated tests):
+
+1. Sign in as an existing administrator/accountant, select the intended workspace,
+   open Documents, and upload the generated fictional PDF once. Confirm automatic
+   navigation to its detail page and that the filename/status appear.
+2. Wait for the final accepted status. Confirm the validation explanation and that
+   no invoice was created. Open its detail link directly and check list pagination.
+3. Download it. Confirm an attachment named `document-{id}.pdf` with the original
+   fictional contents, with no inline preview or visible ticket link.
+4. Sign in with an existing approver membership in that workspace. Confirm metadata
+   and accepted downloads work, Upload document is absent, and `#/documents/new`
+   shows read-only access. On an eligible failed record, confirm no Retry processing
+   control. Do not manufacture failures by editing the development database; the
+   eligible-failure role case is covered automatically with a synthetic record.
+5. Switch workspaces/sign out during a selection or read and confirm old files/data
+   disappear. Hide the tab while status is active, return and use Refresh status to
+   resume. If an upload response is uncertain, use Check upload status before an
+   explicit same-attempt resend.
+
+Stop after Step 5.5. Real S3 setup/verification, OCR/extraction, matching, approvals,
+exports and later deployment/merge work are outside this change.
