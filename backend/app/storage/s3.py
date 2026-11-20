@@ -54,23 +54,38 @@ def check_deadline(deadline):
 
 
 class RemoteReader:
-    def __init__(self, body, maximum, deadline):
+    def __init__(self, body, maximum, deadline, content_length):
         self.body, self.remaining, self.deadline = body, maximum, deadline
+        self.content_length, self.received, self.eof = content_length, 0, False
 
     def read(self, size=-1):
+        check_deadline(self.deadline)
+        if self.eof:
+            return b""
         count = self.remaining + 1 if size < 0 else min(size, self.remaining + 1)
         chunks = []
         while count > 0:
             check_deadline(self.deadline)
             with safe_errors():
-                if hasattr(self.body, "set_socket_timeout"):
-                    self.body.set_socket_timeout(min(2, self.deadline - time.monotonic()))
+                # urllib3 releases the socket as soon as Content-Length bytes
+                # have been consumed, before the caller sees an empty EOF read.
+                # Keep the final read for SDK length/checksum validation, without
+                # asking its timeout setter to access that released socket.
+                if self.received < self.content_length and hasattr(self.body, "set_socket_timeout"):
+                    timeout = min(2, self.deadline - time.monotonic())
+                    if timeout <= 0:
+                        raise StorageUnavailable()
+                    self.body.set_socket_timeout(timeout)
                 data = self.body.read(min(CHUNK_SIZE, count))
             check_deadline(self.deadline)
-            if len(data) > self.remaining:
+            self.received += len(data)
+            if len(data) > self.remaining or self.received > self.content_length:
                 raise StorageIntegrity()
             self.remaining -= len(data)
             if not data:
+                if self.received != self.content_length:
+                    raise StorageIntegrity()
+                self.eof = True
                 break
             count -= len(data)
             chunks.append(data)
@@ -137,7 +152,7 @@ class S3DocumentStorage:
             check_deadline(deadline)
             if not 1 <= response["ContentLength"] <= maximum:
                 raise StorageIntegrity()
-            yield RemoteReader(body, maximum, deadline)
+            yield RemoteReader(body, maximum, deadline, response["ContentLength"])
         finally:
             body.close()
 
