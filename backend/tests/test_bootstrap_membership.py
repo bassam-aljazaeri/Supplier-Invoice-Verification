@@ -106,7 +106,7 @@ def test_bootstrap_and_repeated_seeding_preserve_all_business_and_access_rows(sc
     from app.models import Base
 
     initialize_demo(schema_session)
-    business_tables = [table for table in Base.metadata.sorted_tables if table.name not in {"application_users", "workspace_memberships"}]
+    business_tables = [table for table in Base.metadata.sorted_tables if table.name not in {"application_users", "workspace_memberships", "documents", "document_jobs"}]
 
     def business_snapshot():
         return {table.name: schema_session.execute(select(table).order_by(table.c.id)).all() for table in business_tables}

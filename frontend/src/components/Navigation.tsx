@@ -8,7 +8,8 @@ export default function Navigation({ route }: { route: Route }) {
     { hash: '#/suppliers', title: 'Suppliers', active: route.kind.startsWith('supplier-') },
     { hash: '#/purchase-orders', title: 'Purchase orders', active: route.kind.startsWith('order-') },
     { hash: '#/deliveries', title: 'Delivery records', active: route.kind.startsWith('delivery-') },
-    { hash: '#/invoices', title: 'Invoices', active: route.kind.startsWith('invoice-') }]
+    { hash: '#/invoices', title: 'Invoices', active: route.kind.startsWith('invoice-') },
+    { hash: '#/documents', title: 'Documents', active: route.kind.startsWith('document-') }]
   const authenticated = ['ready', 'loading', 'access-error'].includes(status)
   return <nav className="site-navigation" aria-label="Main navigation">{links.filter((link) => link.hash === '#/status' || (status === 'ready' && selected)).map((link) => <a key={link.hash} href={link.hash} aria-current={link.active ? 'page' : undefined}>{link.title}</a>)}
     <a href={authenticated ? '#/account' : '#/signin'}>{authenticated ? 'Account' : 'Sign in'}</a>

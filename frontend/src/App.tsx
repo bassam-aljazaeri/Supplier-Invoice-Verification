@@ -25,6 +25,9 @@ import DeliveryDetailPage from './pages/deliveries/DeliveryDetailPage.tsx'
 import InvoiceListPage from './pages/invoices/InvoiceListPage.tsx'
 import InvoiceNewPage from './pages/invoices/InvoiceNewPage.tsx'
 import InvoiceDetailPage from './pages/invoices/InvoiceDetailPage.tsx'
+import DocumentListPage from './pages/documents/DocumentListPage.tsx'
+import DocumentUploadPage from './pages/documents/DocumentUploadPage.tsx'
+import DocumentDetailPage from './pages/documents/DocumentDetailPage.tsx'
 import './App.css'
 
 const subscribe = (listener: () => void) => subscribeHashChange(listener)
@@ -56,6 +59,9 @@ function BusinessPages({ route, hash, override }: { route: Route; hash: string; 
     case 'invoice-list': page = <InvoiceListPage page={route.page} />; break
     case 'invoice-detail': page = <InvoiceDetailPage id={route.id} />; break
     case 'invoice-new': page = <InvoiceNewPage draft={invoiceDraft} setDraft={setInvoiceDraft} feedback={invoiceFeedback} setFeedback={setInvoiceFeedback} />; break
+    case 'document-list': page = <DocumentListPage page={route.page} />; break
+    case 'document-new': page = <DocumentUploadPage />; break
+    case 'document-detail': page = <DocumentDetailPage id={route.id} />; break
     default: page = <section className="business-panel"><h2>Page not found</h2><p>This address does not match an available page, or its page parameters are invalid.</p><a href="#/status">Open Status</a></section>
   }
   return <div key={hash}>{override ?? page}</div>

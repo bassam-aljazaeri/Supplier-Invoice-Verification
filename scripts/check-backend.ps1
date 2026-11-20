@@ -55,6 +55,7 @@ try {
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', '-m', 'app.seed_workspace')
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', '-m', 'app.seed_workspace')
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_auth', 'bootstrap'))
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_documents', 'capture'))
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_demo', 'capture'))
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_auth', 'verify'))
     # Restart existing containers; retain the API snapshot and PostgreSQL volume.
@@ -62,6 +63,32 @@ try {
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', 'scripts/check_endpoints.py', '--timeout', '60')
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_demo', 'verify'))
     Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_auth', 'verify'))
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_documents', 'verify'))
+    # Workers start only after schema lifecycle tests and queued-upload persistence checks.
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'prepare'))
+    Invoke-BackendCheckCompose -CheckArguments @('up', '--detach', '--wait', 'worker', 'dispatcher')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'validate'))
+    Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '2', 'redis')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'outage-upload'))
+    Invoke-BackendCheckCompose -CheckArguments @('start', 'redis')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'outage-recover'))
+    Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '2', 'worker')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'lose-message'))
+    Invoke-BackendCheckCompose -CheckArguments @('start', 'worker')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'lost-recover'))
+    Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '2', 'worker')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'arm-interruption'))
+    Invoke-BackendCheckCompose -CheckArguments @('start', 'worker')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'claimed'))
+    Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '1', 'worker')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'expire'))
+    Invoke-BackendCheckCompose -CheckArguments @('start', 'worker')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'interruption-recover'))
+    Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '2', 'worker')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'arm-storage-failure'))
+    Invoke-BackendCheckCompose -CheckArguments @('start', 'worker')
+    Invoke-BackendCheckCompose -CheckArguments ($backendCheckTestExec + @('python', '-m', 'scripts.check_processing', 'exhaust-retry'))
+    Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '10', 'worker', 'dispatcher')
     Invoke-BackendCheckCompose -CheckArguments @('stop', '--timeout', '10', 'db', 'redis')
     Invoke-BackendCheckCompose -CheckArguments @('exec', '-T', 'api', 'python', 'scripts/check_endpoints.py', '--expect-unavailable', '--timeout', '60')
     Invoke-BackendCheckCompose -CheckArguments @('start', 'db', 'redis')
@@ -70,12 +97,12 @@ try {
     $backendCheckFailed = $true
     Write-Error -Message $_ -ErrorAction Continue
     if (Test-Path -LiteralPath $backendCheckEnvFile) {
-        & docker compose @backendCheckArguments ps --all
-        & docker compose @backendCheckArguments logs --no-color --tail 200
+        & docker compose @backendCheckArguments --profile processing ps --all
+        & docker compose @backendCheckArguments --profile processing logs --no-color --tail 40
     }
 } finally {
     if (Test-Path -LiteralPath $backendCheckEnvFile) {
-        & docker compose @backendCheckArguments down --volumes --remove-orphans --timeout 10
+        & docker compose @backendCheckArguments --profile processing down --volumes --remove-orphans --timeout 10
         if ($LASTEXITCODE -ne 0) { $backendCheckFailed = $true }
         Remove-Item -LiteralPath $backendCheckEnvFile
     }

@@ -3,12 +3,32 @@
 services:
   api:
     ports: !reset []
-    volumes: !reset []
+    volumes: !override
+      - document_data:/var/lib/supplier-invoice-verification/documents
     # Separate guarded entrypoint; the production app has no test mode or JWKS override.
     command: ["python", "-m", "tests.run_http_api"]
     environment:
+      DOCUMENT_STORAGE_BACKEND: local
+      DOCUMENT_S3_BUCKET: ""
+      DOCUMENT_S3_REGION: ""
+      DOCUMENT_S3_PREFIX: ""
       RUN_POSTGRES_TESTS: "1"
       POSTGRES_TEST_PROJECT: ${COMPOSE_PROJECT_NAME:?Use an isolated check or CI project}
       COGNITO_REGION: eu-west-1
       COGNITO_USER_POOL_ID: eu-west-1_EXAMPLE
       COGNITO_APP_CLIENT_ID: syntheticclient
+  worker:
+    command: ["python", "-m", "tests.run_document_worker"]
+    environment:
+      DOCUMENT_STORAGE_BACKEND: local
+      DOCUMENT_S3_BUCKET: ""
+      DOCUMENT_S3_REGION: ""
+      DOCUMENT_S3_PREFIX: ""
+      RUN_POSTGRES_TESTS: "1"
+      POSTGRES_TEST_PROJECT: ${COMPOSE_PROJECT_NAME:?Use an isolated check or CI project}
+  dispatcher:
+    environment:
+      DOCUMENT_STORAGE_BACKEND: local
+      DOCUMENT_S3_BUCKET: ""
+      DOCUMENT_S3_REGION: ""
+      DOCUMENT_S3_PREFIX: ""

@@ -20,6 +20,11 @@ export class ApiFailure extends Error {
 }
 
 export type RequestOptions = { signal?: AbortSignal; timeoutMs?: number }
+// Explicit document contracts leave the existing JSON/201 business defaults intact.
+export type RequestContract = {
+  form?: FormData; idempotencyKey?: string; statuses?: readonly number[]
+  blob?: { maximum: number }; readOnly?: boolean; uncertainServerError?: boolean
+}
 export type PrivateContext = {
   workspaceId: string | null
   accessToken: () => Promise<string>
@@ -79,21 +84,46 @@ function pageOf<T>(isItem: (item: unknown) => item is T) {
 }
 
 function responseFailure(status: number, body: unknown, post: boolean) {
-  const kinds: Record<number, FailureKind> = { 401: 'unauthorized', 403: 'forbidden', 422: 'validation', 404: 'missing', 409: 'conflict', 503: 'unavailable' }
-  const messages: Record<number, string> = { 401: 'Your session has ended. Sign in again.', 403: 'Your current permissions do not allow this request.', 422: 'Some fields are invalid.', 404: 'The record or reference was not found.', 409: 'This identifier is already in use.', 503: 'The service is temporarily unavailable.' }
+  const kinds: Record<number, FailureKind> = { 401: 'unauthorized', 403: 'forbidden', 413: 'validation', 415: 'validation', 422: 'validation', 404: 'missing', 409: 'conflict', 503: 'unavailable' }
+  const messages: Record<number, string> = { 401: 'Your session has ended. Sign in again.', 403: 'Your current permissions do not allow this request.', 413: 'Choose a file of at most 5,000,000 bytes.', 415: 'Choose a PDF, JPEG or PNG file.', 422: 'Some fields are invalid.', 404: 'The record or reference was not found.', 409: 'This identifier is already in use.', 503: 'The service is temporarily unavailable.' }
   const kind = kinds[status] ?? 'server'
-  const codes: Record<number, string> = { 401: 'unauthorized', 403: 'forbidden', 422: 'validation_error', 404: 'not_found', 409: 'conflict', 503: 'service_unavailable', 500: 'internal_error' }
+  const codes: Record<number, string> = { 401: 'unauthorized', 403: 'forbidden', 413: 'validation_error', 415: 'validation_error', 422: 'validation_error', 404: 'not_found', 409: 'conflict', 503: 'service_unavailable', 500: 'internal_error' }
   const error = object(body) && object(body.error) ? body.error : null
   const envelope = error && typeof codes[status] === 'string' && error.code === codes[status] && typeof error.message === 'string' && Array.isArray(error.details) && error.details.every((detail) => object(detail) && typeof detail.field === 'string' && typeof detail.message === 'string')
   return new ApiFailure(kind, status === 401 || status === 403 ? messages[status] : envelope ? error.message as string : messages[status] ?? 'The server could not complete the request.', envelope ? error.details as ErrorDetail[] : [], status, post && !envelope && status >= 500)
 }
 
-export async function privateRequest<T>(path: string, isValue: (value: unknown) => value is T, options: RequestOptions, payload?: unknown, mode: 'business' | 'account' = 'business', method = payload === undefined ? 'GET' : 'POST'): Promise<T> {
+async function boundedBlob(response: Response, maximum: number, signal: AbortSignal) {
+  if (!response.body) throw new ApiFailure('invalid-response', 'The document could not be read.')
+  const reader = response.body.getReader()
+  const chunks: Uint8Array<ArrayBuffer>[] = []
+  let size = 0
+  const cancel = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener('abort', cancel, { once: true })
+  try {
+    while (true) {
+      signal.throwIfAborted()
+      const { done, value } = await reader.read()
+      signal.throwIfAborted()
+      if (done) break
+      size += value.byteLength
+      if (size > maximum) throw new ApiFailure('invalid-response', 'The document exceeds the download limit.')
+      chunks.push(new Uint8Array(value))
+    }
+    return new Blob(chunks, { type: response.headers.get('Content-Type') ?? '' })
+  } finally {
+    cancel()
+    signal.removeEventListener('abort', cancel)
+    reader.releaseLock()
+  }
+}
+
+export async function privateRequest<T>(path: string, isValue: (value: unknown) => value is T, options: RequestOptions, payload?: unknown, mode: 'business' | 'account' = 'business', method = payload === undefined ? 'GET' : 'POST', contract: RequestContract = {}): Promise<T> {
   const authority = context
   if (!authority) throw new ApiFailure('unauthorized', 'Sign in before requesting private records.', [], 401)
   if (mode === 'business' && !isUuid(authority.workspaceId)) throw new ApiFailure('forbidden', 'Choose an accessible workspace first.', [], 403)
   if (!path.startsWith('/') || path.startsWith('//') || /[\\\r\n]/.test(path)) throw new ApiFailure('validation', 'Invalid API path.')
-  const post = method !== 'GET'
+  const post = method !== 'GET' && !contract.readOnly
   const timeout = new AbortController()
   const signal = AbortSignal.any([timeout.signal, authority.controller.signal, ...(options.signal ? [options.signal] : [])])
   let dispatched = false
@@ -115,21 +145,22 @@ export async function privateRequest<T>(path: string, isValue: (value: unknown) 
       dispatched = true
       if (post) { authority.writes++; countedWrite = true }
       const response = await fetch(`/api${path}`, {
-        method, headers: { Accept: 'application/json', Authorization: `Bearer ${token}`, ...(mode === 'business' ? { 'X-Workspace-ID': authority.workspaceId! } : {}), ...(payload !== undefined ? { 'Content-Type': 'application/json' } : {}) },
-        cache: 'no-store', credentials: 'omit', redirect: 'error', signal, ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
+        method, headers: { Accept: contract.blob ? 'application/pdf, image/jpeg, image/png' : 'application/json', Authorization: `Bearer ${token}`, ...(mode === 'business' ? { 'X-Workspace-ID': authority.workspaceId! } : {}), ...(contract.idempotencyKey ? { 'Idempotency-Key': contract.idempotencyKey } : {}), ...(payload !== undefined && !contract.form ? { 'Content-Type': 'application/json' } : {}) },
+        cache: 'no-store', credentials: 'omit', redirect: 'error', signal, ...(contract.form ? { body: contract.form } : payload !== undefined ? { body: JSON.stringify(payload) } : {}),
       })
       signal.throwIfAborted()
       if (method === 'DELETE' && response.status === 204) return undefined as T
       let body: unknown
-      try { body = await response.json() } catch {
+      try { body = contract.blob && response.ok ? await boundedBlob(response, contract.blob.maximum, signal) : await response.json() } catch (error) {
+        if (error instanceof ApiFailure) throw error
         if (!response.ok) throw responseFailure(response.status, null, post)
         throw new ApiFailure('invalid-response', 'The response could not be read.', [], response.status, post)
       }
       if (!response.ok) throw responseFailure(response.status, body, post)
       signal.throwIfAborted()
-      const expected = method === 'POST' ? 201 : 200
-      const belongs = mode !== 'business' || (object(body) && (Array.isArray(body.items) ? body.items.every((item) => object(item) && item.workspace_id === authority.workspaceId) : body.workspace_id === authority.workspaceId))
-      if (response.status !== expected || !isValue(body) || !belongs) throw new ApiFailure('invalid-response', 'The server returned an unexpected record format.', [], response.status, post)
+      const expected = contract.statuses ?? [method === 'POST' ? 201 : 200]
+      const belongs = !!contract.blob || mode !== 'business' || (object(body) && (Array.isArray(body.items) ? body.items.every((item) => object(item) && item.workspace_id === authority.workspaceId) : body.workspace_id === authority.workspaceId))
+      if (!expected.includes(response.status) || !isValue(body) || !belongs) throw new ApiFailure('invalid-response', 'The server returned an unexpected record format.', [], response.status, post)
       return body
     })()
     return await Promise.race([operation, interrupted])
@@ -144,7 +175,11 @@ export async function privateRequest<T>(path: string, isValue: (value: unknown) 
       const timedOut = signal.reason instanceof DOMException && signal.reason.name === 'TimeoutError'
       throw new ApiFailure(timedOut ? 'timeout' : 'cancelled', timedOut ? 'The request timed out.' : 'The request was interrupted.', [], undefined, post && dispatched)
     }
-    if (error instanceof ApiFailure) { if (error.uncertainWrite) authority.uncertain = true; throw error }
+    if (error instanceof ApiFailure) {
+      if (post && dispatched && contract.uncertainServerError && (error.status ?? 0) >= 500) error.uncertainWrite = true
+      if (error.uncertainWrite) authority.uncertain = true
+      throw error
+    }
     if (post && dispatched) authority.uncertain = true
     throw new ApiFailure('network', 'Could not reach the service. Check your connection and service status.', [], undefined, post && dispatched)
   } finally {

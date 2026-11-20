@@ -30,7 +30,7 @@ PRIVATE = "synthetic-private-conflict-value"
 def snapshot(session):
     # This fixture owns the original eight business/workspace tables. Explicit
     # assertions below check that it grants no identities or memberships.
-    return {table.name: session.execute(select(table).order_by(table.c.id)).all() for table in Base.metadata.sorted_tables if table.name not in {"application_users", "workspace_memberships"}}
+    return {table.name: session.execute(select(table).order_by(table.c.id)).all() for table in Base.metadata.sorted_tables if table.name not in {"application_users", "workspace_memberships", "documents", "document_jobs"}}
 
 
 def supplier_input(code="DEMO-OFFICE-001"):

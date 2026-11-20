@@ -3,11 +3,12 @@
 AI-assisted supplier invoice extraction, matching, review, and approval.
 
 ## Status
-The local website has Status, supplier, purchase-order, delivery-record, and
-draft-invoice pages backed by PostgreSQL. Step 3.6 adds an explicit repeatable
-fictional demo and disposable persistence verification. This milestone is a
-local manual-record application. Extraction, automatic discrepancy detection,
-and approval remain later work.
+Milestone 5 implementation and local validation are complete. The local website
+has authenticated workspaces, manual supplier/order/delivery/draft-invoice pages,
+and private document upload, background validation, status, retry and authorized
+download. Documents remain separate from invoices. **Accepted means file
+validation, not invoice approval.** OCR/extraction, automatic matching and approval
+remain later work. Pull request and online GitHub CI verification are next.
 
 Step 4.4 protects all business APIs with Cognito access-token verification and
 database workspace permissions. Identity, workspace, and membership APIs are
@@ -18,6 +19,21 @@ See [browser setup and verification](#browser-login-and-workspaces-step-45) and
 [backend authentication instructions](#backend-authentication-and-authorization-step-44).
 The older Step 3 examples below describe business payloads; their requests now
 also require the authentication and workspace headers documented there.
+
+Step 5.3 adds private document APIs and storage; Step 5.4 adds local background
+validation and recovery. Step 5.5 adds Documents pages for upload, status tracking,
+eligible processing retry and accepted-file attachment download. Documents remain
+separate from manual invoices. See [Documents website](#documents-website-step-55)
+and [private document APIs](#private-local-documents-step-53).
+
+**Local private storage is the normal development and CI default.** S3 is an
+optional server-side backend for a separately configured stack. Automated S3
+checks use controlled responses without AWS. Separately, the user completed a
+real private S3 upload, processing retry after the streaming-reader fix, and an
+authorized download whose SHA-256 matched the original PDF; the user reported
+removing the smoke stack/volumes, test object/bucket, IAM role and temporary
+credentials. These are recorded historical results, not checks rerun here; see
+[verification evidence](docs/progress.md) and the [S3 runbook](docs/s3-storage.md).
 
 For setup and the 10 ordered / 8 delivered / 10 invoiced demonstration, see
 [the demo guide](docs/demo.md) and [the seed instructions below](#repeatable-fictional-demo-step-36).
@@ -31,6 +47,67 @@ Built step by step using React, FastAPI, PostgreSQL, and Docker.
 See docs/scope.md and docs/progress.md.
 
 Only fictional or explicitly licensed sample data belongs in this repository.
+
+## Start normal local development after the S3 smoke test
+
+Use the original **local-storage development project**, not the removed smoke
+project or its generated settings/override. Do not point a database containing S3
+document references at local storage: there is no backend migration or fallback.
+The commands below target the normal project `supplier-invoice-verification`.
+If your existing development project has a deliberately different name, use that
+same name throughout so its database and document volumes are retained.
+
+Close any smoke Vite launcher and use fresh **Windows PowerShell** terminals at
+the repository root. Reuse your existing ignored root `.env` with the normal
+development PostgreSQL and public Cognito configuration. Do not carry smoke
+`POSTGRES_*`, `COGNITO_*` or `COMPOSE_*` process overrides into these terminals.
+The explicit project/file selection below avoids the smoke Compose override,
+and the process setting selects local storage without editing `.env`.
+
+```powershell
+$env:DOCUMENT_STORAGE_BACKEND = 'local'
+docker compose --project-name supplier-invoice-verification --env-file .\.env -f .\compose.yaml --profile processing up --build --detach api db redis worker dispatcher
+if ($LASTEXITCODE -ne 0) { throw 'Local services did not start' }
+docker compose --project-name supplier-invoice-verification --env-file .\.env -f .\compose.yaml --profile processing ps --all
+docker compose --project-name supplier-invoice-verification --env-file .\.env -f .\compose.yaml exec -T api alembic current
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/ready'
+```
+
+Expected: **API, PostgreSQL, Redis, worker and dispatcher** running, migration
+`0003_documents (head)`, health `ok`, readiness `ready` with database/Redis `ok`.
+The Alembic command runs inside the **Linux API container** and only reports the
+revision. No migration, seed or volume deletion is needed to resume an existing
+Milestone 5 database; older/fresh databases need the explicit migration/setup
+instructions below. The standard database and private document volumes are
+`supplier-invoice-verification_postgres_data` and
+`supplier-invoice-verification_document_data`. Keep both.
+
+In a second fresh **Windows PowerShell** terminal at the repository root, use
+your existing public browser/Cognito configuration and installed dependencies:
+
+```powershell
+Push-Location .\frontend
+Remove-Item Env:SIV_NO_ENV_FILES -ErrorAction SilentlyContinue
+Remove-Item Env:VITE_DOCUMENT_S3_ORIGIN -ErrorAction SilentlyContinue
+npm.cmd run dev
+```
+
+Open **http://localhost:5173**. The normal Vite configuration proxies `/api` to
+**http://127.0.0.1:8000**, not the former smoke port 8001. The registered Cognito
+callback remains `http://localhost:5173/auth/callback`; do not start sign-in at
+`127.0.0.1:5173`. Local downloads use the authenticated local-content route;
+`VITE_DOCUMENT_S3_ORIGIN` is unnecessary for them. Sign in and select an accessible
+workspace, or create one. Signing in alone does not grant `local-demo` membership.
+Follow the [short document demonstration](docs/demo.md#short-document-upload-demonstration).
+
+This remains a fictional local demo, not a production-ready service. The local
+worker runs as root and emits Celery's superuser warning. Parser resource/network
+restrictions provide limited containment, not a complete sandbox or malware
+guarantee. S3 orphan deletion remains disabled; no OCR/extraction is implemented.
+Older step-labelled sections below retain implementation/checkpoint history;
+[progress](docs/progress.md) separates past automated runs, user verification and
+the still-pending online CI result.
 
 ## Local backend foundation (Step 2A)
 
@@ -92,14 +169,15 @@ Vite development server; the production build needs its own API routing.
 ## Automated checks (Step 2C)
 
 `.github/workflows/ci.yml` runs for pull requests targeting `main` and pushes
-to `main`, `feat/local-foundation`, or `feat/manual-invoice-workflow`. Both jobs use GitHub-hosted Ubuntu 24.04
+to `main`, `feat/local-foundation`, `feat/manual-invoice-workflow`,
+`feat/auth-workspaces`, and `feat/document-processing`. Both jobs use GitHub-hosted Ubuntu 24.04
 runners and `contents: read` permissions. Checkout does not retain credentials.
 The official checkout and setup-node actions are pinned to verified release
 commits ([checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1)
 and [setup-node v7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0)).
 
 The frontend job installs with Node.js 24 and `npm ci`, then runs lint,
-the status request tests, and the production build. The backend job builds
+all frontend tests, and the production build. The backend job builds
 the existing Dockerfile, which uses `uv sync --locked` with `backend/uv.lock`.
 It combines `compose.yaml` and `compose.ci.yaml`, generates temporary database
 settings on the runner, and uses a unique Compose project name for each run
@@ -113,7 +191,11 @@ workspace twice and runs the full demo seed twice. The shared demo checker reads
 all four documents and their lines through live HTTP, checks filtered lists and
 Swagger examples, and compares IDs, timestamps, values, and counts. It retains
 that snapshot, restarts API and PostgreSQL without removing the database volume,
-waits for recovery, and retrieves the same records to prove persistence.
+waits for recovery, and retrieves the same records to prove persistence. Private
+document uploads/bytes also survive that restart. CI then starts the actual
+worker and dispatcher, verifies validation, broker outage/message-loss recovery,
+worker interruption and bounded processing retry using private local storage.
+S3 adapter tests use controlled responses without AWS.
 It then stops its PostgreSQL and Redis containers, checks that `/health` remains HTTP 200 while `/ready` reports
 HTTP 503 with both dependencies unavailable, and restarts them to check recovery.
 Failure logs are printed, and an `always()` cleanup step removes the project's
@@ -195,8 +277,9 @@ docker compose exec -T api alembic upgrade head
 docker compose exec -T api alembic current
 ```
 
-Expect revision `0002_auth_workspaces (head)` after Step 4.3. Running `upgrade head` again is
-harmless. This applies forward schema changes to the development database and
+Expect revision `0003_documents (head)` at Milestone 5 (`0002_auth_workspaces` was
+the earlier Step 4.3 head). Running `upgrade head` again is harmless. This applies
+forward schema changes to the development database and
 retains its named volume. No workspace rows are inserted: an empty workspace
 table is expected until the explicit Step 3.3 command below is run. Do not use test cleanup or
 `alembic downgrade base` on this database. The downgrade is verified only in the
@@ -770,7 +853,7 @@ docker compose exec -T api python -m app.seed_demo
 docker compose exec -T api python -m app.seed_demo
 ```
 
-Expect `0002_auth_workspaces (head)` and a successful fictional-demo summary on
+Expect `0003_documents (head)` and a successful fictional-demo summary on
 each seed. The seed initializes the fixed workspace if missing; a separate
 `seed_workspace` run is optional. These commands intentionally write your chosen
 local demo database. Codex ran seeding only in the guarded disposable checker,
@@ -909,7 +992,7 @@ docker compose exec -T api alembic current
 docker compose exec -T api python -m app.bootstrap_membership --subject 'COPIED_COGNITO_SUB' --workspace-slug local-demo --role administrator
 ```
 
-Expect `0002_auth_workspaces (head)` and a `Membership ready` result containing
+Expect `0003_documents (head)` and a `Membership ready` result containing
 the application-user UUID, workspace UUID, and role. No subject, credentials,
 token, or connection string is printed. Existing records stay in `local-demo`
 with their current IDs and values. No reset, destructive downgrade, or volume
@@ -1390,3 +1473,504 @@ No development API/database or AWS resource was used by these checks.
 
 Real Cognito/browser verification and online GitHub CI remain unobserved here.
 Actual local results and file purposes are recorded in [progress](docs/progress.md).
+
+## Private local documents (Step 5.3)
+
+Use only generated fictional files. An uploaded document is a separate
+workspace-owned record; uploading never creates or changes an invoice.
+The database revision stays `0003_documents`; Step 5.3 adds no migration.
+The [document-processing contract](docs/document-processing.md) describes the
+worker, browser, and cloud-storage contract. Step 5.4 worker instructions follow
+the original Step 5.3 checkpoint below.
+
+### Local storage and configuration
+
+Compose mounts its project-owned `document_data` named volume into the API and,
+when the `processing` profile is enabled, the worker and dispatcher,
+at `/var/lib/supplier-invoice-verification/documents`. No storage port or static
+file serving is added. Completed files and partial writes occupy separate private
+directories, with server-generated keys, directory/file permissions 0700/0600,
+no symlink traversal, and atomic exclusive publication. User filenames are
+display basenames, never storage paths. Identical file bytes are not treated as
+duplicate business invoices or deduplicated across workspaces.
+
+Trusted process configuration (shared by API, worker and dispatcher):
+
+| Setting | Local value/purpose |
+| --- | --- |
+| `DOCUMENT_STORAGE_BACKEND` | Defaults to `local`. Step 5.6A adds explicit `s3`; unsupported/misconfigured modes fail closed without a fallback. Local mode never initializes an AWS client. |
+| `DOCUMENT_STORAGE_ROOT` | `/var/lib/supplier-invoice-verification/documents`; private named-volume root. Direct API process configurations must use an absolute Linux path without symlinks. |
+| `DOCUMENT_TEMP_ROOT` | `/tmp/siv-documents`; Compose supplies a 32 MiB private tmpfs. Incoming temporary files are unlinked/closed on success, rejection, timeout, or cancellation. |
+
+At most four uploads run per API process. Completed objects survive API/container
+restart while the named volume is retained. Deleting that volume loses private
+files; do not use volume deletion as routine recovery. This is single-host local
+storage, not S3 policy/encryption/durability verification or a production
+financial-data service. Optional S3 configuration and offline verification are now
+available in [Step 5.6A](#optional-private-s3-storage-step-56a). The user's completed
+Step 5.6B upload/retry/download and reported cleanup are recorded separately from
+automated tests in [progress](docs/progress.md).
+
+The CI override retains only its own project-scoped document volume, removes
+the development source mount and API host ports, and uses the existing synthetic
+signed HTTP harness. It requires Docker Compose 2.24.4+ for `!override` (local
+verification used Docker Desktop's newer Compose). Existing development
+PostgreSQL data and all migration files are preserved. See the
+[Compose merge rules](https://docs.docker.com/reference/compose-file/merge/).
+
+### HTTP contract
+
+Backend paths below require the current Cognito **access** bearer token and one
+canonical UUID `X-Workspace-ID`. Browser/proxy clients prepend `/api`; authenticated
+fetches must stay on that same origin. Administrator/accountant may upload/retry;
+all three member roles may read metadata and download accepted files. Backend
+checks apply on every request. Nonmembers have no access; other-workspace record
+IDs return scoped 404 rather than exposing another company's metadata.
+
+| Route | Request and result |
+| --- | --- |
+| `POST /documents` | Exactly one multipart file part named `file`, no other fields, and one canonical UUID `Idempotency-Key`. Returns 202 metadata with queued state, Location and Retry-After headers after private storage and the document/job commit succeed. |
+| `GET /documents` | `limit=20` (1-100), `offset=0` (0-10000), optional `state`, optional caller-scoped `upload_attempt_key`. Returns `items/limit/offset/total`, ordered by creation time then ID descending. Unknown/repeated parameters are rejected. |
+| `GET /documents/{id}` | Safe metadata/status, including a caller-specific `can_retry` hint; no storage key/path, file bytes, hash, upload key, or lease token. |
+| `POST /documents/{id}/retry` | Empty body. Only eligible failed processing after the 60-second cooldown and first three attempts, with finalized stored bytes and one unused retry cycle. Atomically requeues the same job; 202, otherwise 409. Approvers cannot retry. |
+| `POST /documents/{id}/download-url` | Empty body. Accepted files only, otherwise 409. Returns a 60-second local authenticated download grant. Approvers may request this POST as a read operation; other POST permissions are unchanged. |
+| `GET /documents/{id}/local-content?ticket=...` | Follow the local grant using the same bearer/workspace headers; the URL also binds the caller/document/workspace and expires or becomes invalid on API restart. Accepted-state and current membership are rechecked; response is an attachment with a generated filename, never an inline preview. |
+
+Download grants contain a relative `/api/documents/.../local-content` URL, which
+uses the existing proxy prefix. Direct backend clients remove `/api`. Keep
+grants/tickets in memory, never log them. Membership removal immediately denies
+subsequent local downloads; this local behavior does not prove S3 presigned-URL
+revocation behavior. API/Uvicorn access logs remain disabled. No frontend
+document flow, token storage, or browser write retries are added in this step.
+
+Uploads permit 1-5,000,000 **file bytes**. The streaming adapter also caps the
+complete multipart body at 5,065,536 bytes, overhead at 65,536 bytes, part headers
+at 8,192 bytes/16 headers, and the boundary at 70 characters. Actual received
+bytes are counted even with missing or understated Content-Length. Reception is
+bounded to 60 seconds with a ten-second idle limit, storage awaits to 15 seconds,
+and sets a 90-second upload request deadline. A late storage writer retains its
+upload slot and its own file descriptor until it exits. Database calls finish
+before their session closes, including cancellation cleanup after that deadline;
+a cancelled client must still treat the outcome as uncertain.
+
+PDF/JPEG/PNG **signatures** and SHA-256 are checked here; browser MIME and filename
+extensions are not trusted. Full decoding, encryption/page/frame/dimension checks,
+malware guarantees, and acceptance remain deferred. A recognized but malformed,
+encrypted, or multipage PDF can therefore be queued in Step 5.3. All such bytes
+remain private and undownloadable until future worker acceptance. The existing
+safe error envelope is retained: 401/403/404/409/422/503/500, plus document-upload
+413/415 using `validation_error` for size/unsupported-media failures.
+
+### Replay, failure recovery, and current limits
+
+Keep the same upload-attempt key for the same caller/workspace/file/name after
+an uncertain response. Replays return the original ID/current metadata: 202 for
+receiving/queued/processing, 200 for terminal states. Different bytes or display
+filename under that scoped key return 409; a new key intentionally creates a new
+document. Other operations reject the idempotency header. Never automatically
+resend a write after timeout, logout, navigation, or a workspace change; query
+the original workspace using `upload_attempt_key`, then read the returned ID.
+
+There is no shared database/filesystem transaction. The API commits a receiving
+reservation before storage, then conditionally finalizes that owner and inserts
+exactly one pending job in the same transaction. It returns queued success only
+afterward; no Celery message is sent. Storage failure or interruption can leave
+a receiving row and no job, with absent or completed private bytes. A failure
+after the final commit can return 503 even though queued state/job are durable.
+Completed objects are never blindly deleted on an uncertain commit or conflict.
+
+At the Step 5.3 checkpoint successful uploads remained **queued**. Step 5.4 now
+processes them when its services run (see below). Incomplete receiving reservations
+do not resume merely because the client replays them. The reconciler inspects expired
+upload leases, verify size/hash, then finalize matching bytes or close incomplete
+uploads; it must also clean abandoned private partials/orphans under the
+contract's age/ownership rules. No background cleanup or scheduler runs yet.
+Retry/download guards are implemented now, but ordinary uploads cannot reach
+accepted/failed worker outcomes in this step. Tests seed those later states only
+inside guarded disposable fixtures; there is no public acceptance bypass.
+
+### Repeat isolated verification
+
+From the repository root, use **Windows host PowerShell**. Python, Alembic,
+pytest, and the signed HTTP checker run inside **Linux Docker containers**:
+
+```powershell
+.\scripts\check-backend.ps1
+git diff --check
+```
+
+The checker creates its own PostgreSQL/Redis services, private document volume,
+tmpfs, and generated settings, then removes those resources. It never uses the
+development database or actual environment files. Alongside the retained health,
+authentication, migration, manual-record, and outage/recovery tests, it verifies
+real HTTP upload/replay/conflict, one durable queued job, and exact private bytes
+and metadata before/after API/PostgreSQL restart. Raw-ASGI tests separately cover
+missing/forged lengths and early bounds; controlled adapters/commit faults cover
+uncertain failure windows. These checks do not claim full file validation, real
+Cognito/browser acceptance, a worker/broker integration, or S3 verification.
+
+The adapter checks the closing-boundary callback explicitly rather than relying
+only on the parser's `finalize()`; see the [streaming parser API](https://multipart.fastapiexpert.com/api/).
+The only new dependency is `python-multipart` 0.0.33; all 42 prior lockfile
+package versions were retained. Exact observed results and remaining checks
+are recorded in [progress](docs/progress.md). No new development migration is
+needed for Step 5.3. The following Step 5.4 section extends this checkpoint.
+
+## Local background document processing (Step 5.4)
+
+Supplier-Invoice-Verification now validates queued documents locally. PostgreSQL
+owns document/job state; Redis DB 1 carries JSON document identifiers. The separate
+Celery worker validates originals from the private volume. A small dispatcher polls
+every five seconds, at most 20 jobs per category, and performs bounded recovery and
+cleanup. No invoice is created, and no OCR, browser document UI or AWS call is added.
+The schema remains **0003_documents**; no new migration is required.
+
+For an already configured local stack at that revision, **Windows PowerShell**
+(all Python processes below run inside **Linux containers**):
+
+```powershell
+docker compose --profile processing up --build --detach
+docker compose ps --all
+docker compose logs --tail 100 worker dispatcher
+docker compose exec -T api alembic current
+```
+
+Expected: API, PostgreSQL, Redis, worker and dispatcher running; Alembic reports
+`0003_documents (head)`. The worker banner shows queue `documents`, prefork concurrency
+1, Redis `/1`, and disabled results. No additional host port is published. Worker and
+dispatcher use the backend image and the same private volume; they do not mount source
+code or receive Cognito configuration. Their memory caps are 512/256 MiB. Stop just
+processing with `docker compose stop worker dispatcher`; pending work stays durable.
+These commands are instructions, not a record of migrations against your development DB.
+
+Uploads still return 202/queued after storage plus database commit. Metadata then shows
+`processing`, followed by `accepted`, `rejected` or `failed`. Accepted files alone can
+use the existing authorized attachment-download routes. Structural acceptance is not
+malware scanning. PDF validation requires exactly one page and no encryption; images
+must decode fully, have one frame, dimensions at most 10,000 each, and at most
+10,000,000 pixels. APNG and multi-image JPEG containers are rejected. File byte limits
+remain 5,000,000. Original bytes are never rewritten.
+
+The parser receives a read-only anonymous input descriptor, a scrubbed environment
+and no inherited storage/database descriptors. It runs with 20-second wall,
+10-second CPU, and 256 MiB address-space limits; temporary input uses the private
+32 MiB mount. Linux seccomp blocks networking and creation/execution of other processes;
+unsupported architectures or unavailable containment fail closed (worker startup probes
+the restriction). Supported hosts here are Linux x86_64/aarch64 containers. Process
+groups are killed/reaped on timeout/cancellation, with a parent-death signal for worker
+loss. This is limited parser containment, not a complete hostile-code sandbox or a
+production financial-data security platform.
+
+Dispatch commits its 30-second ownership lease before publishing, waits at most ten
+seconds outside a database transaction, and conditionally records success. Failed
+publication waits 30 seconds; successful but unclaimed publication becomes due again
+after 180 seconds. Redis message loss therefore cannot erase pending database work.
+Atomic worker claims take a fresh token and a 120-second nonrenewable lease; only that
+unexpired owner can finish. Repeated delivery is harmless, and an expired attempt cannot
+overwrite a newer one. Interrupted attempts are recovered by the dispatcher.
+Worker claim/completion wait under a three-second database lock timeout, so brief
+publisher bookkeeping does not cause a queued delivery to be acknowledged unclaimed.
+Dispatcher scans skip locked rows instead of waiting behind another dispatcher.
+
+Temporary failures retry after ten then thirty seconds, with three claims per cycle.
+After the first exhausted cycle, administrator/accountant callers may explicitly retry
+once through `POST /documents/{id}/retry`, after the existing 60-second cooldown. The
+same job retains its lifetime count (maximum six). Permanent file rejection never
+retries; storage-integrity/upload-incomplete failures are also ineligible. No automatic
+browser write retry is added. Celery uses late acknowledgement, prefetch 1, soft/hard
+limits 45/60 seconds and Redis visibility timeout 180; database scheduling handles
+retries rather than Celery ETA/autoretry. Execution is not exactly once. See
+[Celery's Redis visibility guidance](https://docs.celeryq.dev/en/stable/getting-started/backends-and-brokers/redis.html).
+
+Expired receiving uploads receive a new fenced owner: matching bytes produce a queued
+document plus job, missing bytes become `upload_incomplete`, and mismatched bytes become
+`storage_integrity`. Storage outages are deferred up to 15 minutes after reservation.
+Cleanup inspects at most 100 storage entries per pass using incremental cursors. Partial
+files older than ten minutes require an exclusive nonblocking advisory lock; live writers
+hold that lock through publication/unlink. Objects older than 24 hours require a fresh
+database check showing no reference or terminal `upload_incomplete`. Receiving, queued,
+accepted, rejected and other failed documents retain their objects. Database/listing
+failure stops cleanup; immutable server keys are never reused. Shared S3/DB transactions
+and automatic removal of rejected files are not claimed.
+
+To run the full isolated verification, **Windows PowerShell**:
+
+```powershell
+.\scripts\check-backend.ps1
+git diff --check
+```
+
+Expected: pytest reports no failures; `Real HTTP/Redis/worker processing phase verified`
+appears for validation, broker outage/recovery, message loss/recovery, claimed-worker
+interruption/recovery and storage-failure exhaustion/explicit retry. Existing queued-upload
+persistence, synthetic token/workspace permissions, manual-record snapshots, migrations
+and health/readiness outage checks also run. Finally the unique disposable containers,
+network, document/PostgreSQL volumes and generated settings are removed. The checker
+uses generated fictional files and synthetic signing keys, never real Cognito, AWS,
+actual environment files or development storage/database. CI runs the same phases.
+
+Focused PostgreSQL tests use independent connections for claims and stale ownership;
+parser tests use actual Linux subprocesses with no network. Integration uses actual
+HTTP, Redis delivery, dispatcher and prefork worker, never eager mode. Only the guarded
+checker accelerates stored fixture timestamps to avoid waiting 120/180-second leases
+and retry cooldowns; focused tests verify real configured intervals. A test-only worker
+entrypoint gates a fixture after its real claim for deterministic interruption, with
+database/project guards before activation. Controlled unit faults remain distinct from
+these process-level checks.
+
+Dependencies added: Celery Redis extra **5.7.0**, Pillow **13.0.0**, pypdf **6.21.4**
+and their locked transitive dependencies. Existing 43 package versions are preserved.
+Local checks incur no AWS charges; the user's real S3 exercise is separate
+Step 5.6B evidence, recorded in progress rather than asserted by these tests.
+The Step 5.5 Documents website is described below. Online GitHub execution and real identity/cloud
+integration are separate from this disposable local verification.
+
+This portfolio setup retains the backend image's root user, so Celery reports its
+standard superuser warning. Container-user/volume ownership hardening, malware
+scanning, production quotas, backup/restore and retention operations are not supplied
+by this milestone. Parser containment and private local storage do not establish a
+production financial-data service.
+
+## Documents website (Step 5.5)
+
+After sign-in and workspace selection, Documents appears beside Invoices.
+`#/documents?limit=20&offset=0` lists safe metadata, newest first, with Previous,
+Next and explicit refresh. `#/documents/new` accepts one fictional file, and
+`#/documents/{id}` supports deep links, status, authorized download and eligible
+processing retry. Filename/size/type/status and UTC timestamps are shown; no
+storage key or ticket is displayed. **Accepted means file validation passed. It
+does not mean an invoice was matched or approved.** No invoice is created or linked.
+
+Administrators/accountants can upload and explicitly retry eligible failed
+processing. Approvers can read metadata and download accepted files, with no
+upload/retry controls. The backend still enforces current membership and role.
+Rejected, queued, processing, receiving and failed file bytes cannot be downloaded.
+The existing manual-record pages and Cognito/session behavior are retained.
+
+Uploads use one `file` multipart field and one canonical UUID `Idempotency-Key`.
+The browser sets the multipart boundary. Early extension/MIME/byte checks provide
+feedback; the server/worker decides validity. The file limit remains **5,000,000
+bytes**, with single-page/unprotected PDF and single-frame image guidance. Only
+uploads use the 90-second request limit; document reads use five seconds.
+
+An uncertain upload response retains its File/key only in the current upload view.
+**Check upload status** uses the caller-scoped recovery GET. A found document opens
+its status page. An empty result does not exclude a late reservation: the UI waits
+a conservative full 90-second server window after the uncertain response before
+offering **Retry same upload**, using the original file/key. There is no automatic
+write replay. A new selection/new attempt gets a new key; a 409 does not silently
+replace the key. Navigation, reload, logout and workspace/session changes discard
+the selection and in-memory attempt. Inspect the original workspace's list before
+starting another upload if the previous outcome was uncertain.
+
+**Retry processing** is different: it requeues the existing stored file only when
+the backend's current `can_retry` hint is true and the caller can write. The backend
+rechecks its 60-second cooldown and one additional cycle. An uncertain retry response
+requires a status GET before another action; the browser does not repeat its POST.
+For an ineligible failure, refresh after the cooldown to check again; permanent
+rejection/integrity/incomplete-upload failures and exhausted budgets are not retryable.
+
+Only the visible detail view polls active receiving/queued/processing records, after
+each previous read finishes: three-second intervals for the first five reads, then
+five seconds, with at most 20 automatic reads/two minutes. Terminal states, errors,
+hidden tabs, navigation and session/workspace changes stop it. Returning to a hidden
+tab requires explicit Refresh status; after the cap, refresh performs a manual read.
+Abort signals and generation guards both prevent obsolete results from restoring data.
+
+Accepted downloads request a fresh short-lived local grant, fetch the local-content
+route with current bearer/workspace headers, and trigger an attachment with the API's
+generated document filename. Blob URLs are revoked on completion/navigation/unmount.
+Tickets are never rendered, persisted or logged by the client. Step 5.6A also accepts
+S3 grants only for the explicitly configured HTTPS origin, opened by browser
+navigation with no app headers; see below. Vite proxy failures log a fixed message rather than
+the private request URL/Error. Keep `DEBUG`, `NODE_DEBUG` and HTTP/proxy debug logging
+disabled while handling documents; production access logs must also exclude tickets.
+No token or file bytes enter localStorage/sessionStorage/IndexedDB; the existing
+sessionStorage allowance remains short-lived PKCE correlation only.
+
+For the existing configured services and database already at `0003_documents`,
+**Windows PowerShell**, from the repository root:
+
+```powershell
+docker compose --profile processing ps --all
+docker compose --profile processing logs --tail 60 api worker dispatcher
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/ready'
+```
+
+Expected: API, database, Redis, worker and dispatcher are running; health is `ok`,
+and readiness is `ready` with database/redis `ok`. These operator commands inspect
+the existing stack. **No migration or seed is needed for Step 5.5.**
+
+In a separate **Windows PowerShell** terminal, from the repository root:
+
+```powershell
+Set-Location .\frontend
+Remove-Item Env:SIV_NO_ENV_FILES -ErrorAction SilentlyContinue
+npm.cmd run dev
+```
+
+Expected: Vite serves **http://localhost:5173** and proxies `/api` to the existing
+API. Use `localhost` for the registered Cognito callback. Existing public browser
+configuration is reused; no new environment setting or dependency is required.
+The verification-only environment flag is removed here so your configured browser
+settings can load when you deliberately start Vite yourself.
+
+Repeat automated verification without loading actual environment files, from the
+repository root in **Windows PowerShell**:
+
+```powershell
+Push-Location .\frontend
+$documentCheckPreviousFlag = $env:SIV_NO_ENV_FILES
+try {
+    $env:SIV_NO_ENV_FILES = '1'
+    npm.cmd test
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed' }
+    npm.cmd run lint
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend lint failed' }
+    npm.cmd run build
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
+} finally {
+    $env:SIV_NO_ENV_FILES = $documentCheckPreviousFlag
+    Pop-Location
+}
+git diff --check
+```
+
+Expected: all frontend tests pass, ESLint/TypeScript/Vite exit successfully, and no
+whitespace errors. Tests use synthetic sessions/files, mocked document transports,
+controlled polling clocks and rendered React controls. A separate real loopback
+proxy-failure test uses its own disposable HTTP fixture, never the development API.
+These automated checks do not establish a real Cognito/browser upload/download pass.
+Actual results and outstanding manual checks are recorded in [progress](docs/progress.md).
+
+For a generated fictional one-page PDF, optionally run the following operator
+commands from the repository root. Python runs inside the **Linux API container**;
+this helper generates bytes and does not migrate, seed or query the database:
+
+```powershell
+$fictionalPdfBase64 = docker compose exec -T api python -c "from tests.document_helpers import pdf; import base64; print(base64.b64encode(pdf()).decode())"
+if ($LASTEXITCODE -ne 0) { throw 'Fictional PDF generation failed' }
+$fictionalPdfPath = Join-Path ([IO.Path]::GetTempPath()) 'Supplier-Invoice-Verification-fictional-invoice.pdf'
+[IO.File]::WriteAllBytes($fictionalPdfPath, [Convert]::FromBase64String(($fictionalPdfBase64 -join '')))
+$fictionalPdfPath
+```
+
+Manual browser checklist (not performed by the automated tests):
+
+1. Sign in as an existing administrator/accountant, select the intended workspace,
+   open Documents, and upload the generated fictional PDF once. Confirm automatic
+   navigation to its detail page and that the filename/status appear.
+2. Wait for the final accepted status. Confirm the validation explanation and that
+   no invoice was created. Open its detail link directly and check list pagination.
+3. Download it. Confirm an attachment named `document-{id}.pdf` with the original
+   fictional contents, with no inline preview or visible ticket link.
+4. Sign in with an existing approver membership in that workspace. Confirm metadata
+   and accepted downloads work, Upload document is absent, and `#/documents/new`
+   shows read-only access. On an eligible failed record, confirm no Retry processing
+   control. Do not manufacture failures by editing the development database; the
+   eligible-failure role case is covered automatically with a synthetic record.
+5. Switch workspaces/sign out during a selection or read and confirm old files/data
+   disappear. Hide the tab while status is active, return and use Refresh status to
+   resume. If an upload response is uncertain, use Check upload status before an
+   explicit same-attempt resend.
+
+The local Step 5.5 browser walkthrough is complete; evidence is in progress.md.
+
+## Optional private S3 storage (Step 5.6A)
+
+Local storage remains the development/CI default. Do not change the storage mode
+of an existing database: its rows contain adapter-specific references, and this
+step supplies no file migration or mixed-backend lookup. Use a fresh isolated
+database/project and a dedicated S3 test prefix for any separately requested live exercise.
+
+| Process setting | Explicit S3 value |
+| --- | --- |
+| `DOCUMENT_STORAGE_BACKEND` | `s3` on API, worker and dispatcher |
+| `DOCUMENT_S3_BUCKET` | Private general-purpose bucket; DNS name with no dots, access-point alias or directory-bucket suffix |
+| `DOCUMENT_S3_REGION` | Exact commercial AWS region, for example `eu-west-1`; no GovCloud/China/custom endpoints in this adapter |
+| `DOCUMENT_S3_PREFIX` | Dedicated prefix ending `/`, for example `siv-smoke/run-unique/documents/`; 1-4 segments of 1-64 letters/digits/underscore/hyphen each |
+| `VITE_DOCUMENT_S3_ORIGIN` | Public browser configuration, exactly `https://BUCKET.s3.REGION.amazonaws.com`, without trailing slash, path, port or query; restart/rebuild Vite after changing it |
+
+The AWS SDK credential chain runs only in server processes in explicit S3 mode.
+Compose does not forward host AWS credentials or mount credential files. Supply a
+workload role or an operator-provisioned, read-only temporary credential chain to
+all three processes for Step 5.6B; never put credentials in Vite settings, Git,
+examples or logs. [The isolated smoke setup and restricted policies](docs/s3-storage.md)
+give the exact configuration and later operator commands. No AWS resources or live
+AWS calls are needed for Step 5.6A.
+
+Uploads use one `PutObject`, `IfNoneMatch="*"`, explicit SHA-256 and SSE-S3
+`AES256`; no ACL or multipart transfer. A precondition conflict is a replay only
+after a bounded GET matches the recorded size and SHA-256. ETags and object
+metadata are never treated as the application's digest. Concurrent-write conflicts,
+access denial and outages fail safely without overwriting bytes. SDK calls use
+two-second connection/read timeouts and one attempt; wrong-region redirects are
+blocked. Reads enforce the 5 MB limit and check a 15-second operation deadline
+between chunks. API storage awaits retain the existing 15-second limit and late
+upload writers retain their upload slot. Network/credential-chain behavior is not
+proven by offline tests. The user's live upload/retry/download result is separate
+evidence, not a complete network or failure-mode certification. See the
+[AWS conditional-write contract](https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/put_object.html).
+
+Receiving-upload reconciliation still hashes bytes and uses database ownership to
+finalize or close expired reservations. Job dispatch/recovery is unchanged.
+**S3 orphan listing and deletion are disabled**, including direct adapter deletion:
+a database reference check cannot lock out a delayed remote writer or fence an
+S3 delete like the local inode/advisory-lock checks. This prevents cleanup from
+deleting active/finalized S3 uploads but can retain abandoned objects indefinitely.
+Keep all local cleanup behavior. Later operator cleanup must stop writers, review
+the isolated test manifest and remove only those designated test objects; do not
+apply a broad lifecycle expiration to a prefix containing accepted documents.
+
+Accepted-only grants check current user/workspace access and scoped status before
+storage access/signing. S3 grants are SigV4 GET links for at most 60 seconds (the
+signing credentials can expire sooner), with attachment filename, detected MIME
+type and `no-store` response overrides. A link already issued can remain usable
+until expiry after membership removal; new grants are denied. The client validates
+document/workspace/delivery and the exact configured S3 origin, then uses a temporary
+anchor with `noopener noreferrer` and `no-referrer`. It never sends the app token or
+workspace headers to S3, fetches external bytes, renders the signed URL or saves it
+in application storage. The authenticated local GET/blob download stays separate.
+No CORS policy is needed for this S3 navigation flow. Keep SDK, HTTP, proxy and
+browser debug/query logging disabled. [AWS explains presigned-link lifetime](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html).
+
+Repeat offline verification from the repository root in **Windows PowerShell**:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-backend.ps1
+if ($LASTEXITCODE -ne 0) { throw 'Disposable backend checks failed' }
+Push-Location .\frontend
+$s3CheckPreviousFlag = $env:SIV_NO_ENV_FILES
+try {
+    $env:SIV_NO_ENV_FILES = '1'
+    npm.cmd test
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed' }
+    npm.cmd run lint
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend lint failed' }
+    npm.cmd run build
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
+} finally {
+    $env:SIV_NO_ENV_FILES = $s3CheckPreviousFlag
+    Pop-Location
+}
+git diff --check
+if ($LASTEXITCODE -ne 0) { throw 'Whitespace check failed' }
+```
+
+The PowerShell checker runs Python/pytest and real HTTP/PostgreSQL/Redis/worker
+checks inside **Linux containers**, with generated settings and disposable volumes.
+`compose.ci.yaml` forces local mode for all three processes regardless of inherited
+S3 mode. S3 tests inject Botocore Stubber or controlled in-memory clients, synthetic
+credentials and null SDK config/credential paths; SDK HTTP is blocked or replaced
+by a controlled transport. These are **simulated S3 tests**, not an AWS integration
+test. The checker does not switch or inspect development storage/database.
+
+Added backend dependency: Boto3 **1.44.3**, with Botocore **1.44.3**, JMESPath
+**1.1.0**, s3transfer **0.19.3**, urllib3 **2.8.0** locked in `backend/uv.lock`.
+Prior locked package versions are preserved. Frontend dependencies/lockfile and
+database migrations are unchanged. Actual results are in [progress](docs/progress.md).
+Step 5.6A offline implementation and the user's Step 5.6B live exercise are
+complete with the evidence/limits recorded in progress. Step 5.7 now prepares the
+pull request and online CI verification; no Textract/OCR or later milestone work
+is included. No new suite run or online CI pass is implied by this documentation.

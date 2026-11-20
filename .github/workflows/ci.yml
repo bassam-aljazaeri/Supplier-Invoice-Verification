@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, feat/local-foundation, feat/manual-invoice-workflow, feat/auth-workspaces]
+    branches: [main, feat/local-foundation, feat/manual-invoice-workflow, feat/auth-workspaces, feat/document-processing]
 
 permissions:
   contents: read
@@ -84,7 +84,7 @@ jobs:
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T api alembic current
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_schema verify
       - name: Run backend tests in Linux API container
-        timeout-minutes: 2
+        timeout-minutes: 4
         run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api pytest -q
       - name: Verify explicit workspace initialization is repeatable
         timeout-minutes: 2
@@ -94,6 +94,9 @@ jobs:
       - name: Register and explicitly grant the synthetic HTTP caller
         timeout-minutes: 2
         run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_auth bootstrap
+      - name: Verify private document upload through real HTTP
+        timeout-minutes: 2
+        run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_documents capture
       - name: Seed demo twice and capture live API records
         timeout-minutes: 3
         run: docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_demo capture
@@ -109,6 +112,36 @@ jobs:
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T api python scripts/check_endpoints.py --timeout 60
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_demo verify
           docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_auth verify
+          docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" exec -T -e RUN_POSTGRES_TESTS=1 -e POSTGRES_TEST_PROJECT="$COMPOSE_PROJECT_NAME" api python -m scripts.check_documents verify
+      - name: Verify real document worker, broker outages, message loss and interruption
+        timeout-minutes: 5
+        run: |
+          dc() { docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" "$@"; }
+          check_processing() { dc exec -T api python -m scripts.check_processing "$1"; }
+          check_processing prepare
+          dc up --detach --wait worker dispatcher
+          check_processing validate
+          dc stop --timeout 2 redis
+          check_processing outage-upload
+          dc start redis
+          check_processing outage-recover
+          dc stop --timeout 2 worker
+          check_processing lose-message
+          dc start worker
+          check_processing lost-recover
+          dc stop --timeout 2 worker
+          check_processing arm-interruption
+          dc start worker
+          check_processing claimed
+          dc stop --timeout 1 worker
+          check_processing expire
+          dc start worker
+          check_processing interruption-recover
+          dc stop --timeout 2 worker
+          check_processing arm-storage-failure
+          dc start worker
+          check_processing exhaust-retry
+          dc stop --timeout 10 worker dispatcher
       - name: Verify health stays available when dependencies stop
         timeout-minutes: 2
         run: |
@@ -124,14 +157,14 @@ jobs:
         timeout-minutes: 1
         run: |
           if [[ -f "$RUNNER_TEMP/supplier-invoice-verification-ci.env" ]]; then
-            docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" ps --all
-            docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" logs --no-color --tail 200
+            docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" --profile processing ps --all
+            docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" --profile processing logs --no-color --tail 40
           fi
       - name: Clean up disposable containers and volumes
         if: ${{ always() }}
         timeout-minutes: 2
         run: |
           if [[ -f "$RUNNER_TEMP/supplier-invoice-verification-ci.env" ]]; then
-            docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" down --volumes --remove-orphans --timeout 10
+            docker compose --env-file "$RUNNER_TEMP/supplier-invoice-verification-ci.env" --profile processing down --volumes --remove-orphans --timeout 10
             rm -f -- "$RUNNER_TEMP/supplier-invoice-verification-ci.env"
           fi
