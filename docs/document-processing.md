@@ -1,8 +1,23 @@
 # Supplier-Invoice-Verification: private document processing contract
 
-Step 5.1, 2026-10-28: proposed contract prepared; user review pending.
-This checkpoint changes documentation only. Everything described as new below
-is planned for Steps 5.2-5.7, not implemented or verified at runtime here.
+Historical Step 5.1 contract, prepared 2026-10-28. The design/proposed wording and
+ordered plan below describe that checkpoint, not the current implementation state.
+Milestone 5 implementation and local validation are now complete; Step 5.7 is
+pull request and online CI verification. See [README](../README.md) for current
+local startup, [demo](demo.md) for the document walkthrough and [progress](progress.md)
+for historical automated runs and user verification.
+
+Local storage is the normal default; S3 is optional. Automated S3 tests are
+AWS-free simulations. Separately, the user completed a real S3 upload, processing
+retry after the streaming-reader fix, Accepted and an authorized download whose
+SHA-256 matched the original, and reported cleanup. No new AWS verification is
+claimed by this update.
+One deliberate implementation limit supersedes the proposed remote cleanup below:
+**S3 orphan listing/deletion is disabled**, because filesystem locks do not fence
+remote writers; local cleanup and durable recovery remain. No OCR/extraction is
+included. Parser containment is limited, and the local worker still emits its
+root-user warning; this is not a production-ready service. [The S3 runbook](s3-storage.md)
+records the backend configuration, cleanup limits and live evidence boundaries.
 
 ## 1. Scope and relationship to invoices
 

@@ -1,8 +1,20 @@
-# Private S3: Step 5.6A limits and Step 5.6B operator preparation
+# Private S3: configuration, verification and limits
 
-Step 5.6A implements the optional adapter and verifies it with controlled local
-tests. Nothing in this runbook has been run against AWS. Step 5.6B requires a
-separate request, a designated bucket/prefix and a current region-specific pricing,
+Step 5.6A implemented the optional adapter and verified it with controlled local
+tests. Step 5.6B user verification is now recorded in [progress](progress.md):
+real private S3 upload, processing retry after the streaming-reader fix, Accepted,
+and authorized PDF download with matching original/download SHA-256. The user
+reported removal of the isolated smoke stack/volumes, dedicated object/bucket,
+IAM role and temporary credentials. This is historical operator evidence, not an
+AWS check or test rerun performed during Step 5.7 documentation preparation.
+
+**Local storage remains the normal development and CI default.** Automated S3
+tests use controlled responses and loopback HTTP without AWS, separately from
+that live exercise. Return to the original local stack using
+[README's normal startup instructions](../README.md#start-normal-local-development-after-the-s3-smoke-test).
+The setup/policy templates below are retained for a separately requested future
+repeat; they are not instructions to recreate the removed resources now. Any
+repeat needs a designated bucket/prefix, current region-specific pricing,
 request/download budget and cleanup review. Do not assume free-tier eligibility.
 Use fictional files only. Do not attach S3 to the existing local database or copy
 its files: backend selection is per stack, and there is no migration/fallback.
@@ -229,7 +241,13 @@ isolated API/browser stack and public `VITE_DOCUMENT_S3_ORIGIN` equal to the exa
 bucket origin above; preserve the separate synthetic-harness and real-Cognito
 evidence. The synthetic no-host-port setup above does not exercise a browser.
 
-## Live evidence still required in Step 5.6B
+## Live verification checklist and evidence limits
+
+The happy-path upload, retry after the reader fix, Accepted status, matching
+authorized download and cleanup report above are complete user-reported evidence.
+The remaining checklist is retained for any separately requested repeat. Do not
+infer verification of every negative permission case, expiry, bucket setting or
+charge from the happy-path result; record only what the operator actually checks.
 
 Verify the configured Block Public Access, disabled ACLs, TLS restriction and
 AES256 on actual objects with the operator identity. Upload one generated
@@ -251,3 +269,8 @@ operations to finish, then have the separate operator remove **only** those
 reviewed test objects/versions and confirm the prefix is clean. Do not delete
 the whole bucket, unrelated objects or accepted documents in another stack.
 Record actual charges, retained objects and cleanup limitations in progress.md.
+
+This optional backend does not add OCR/extraction or production readiness. The
+normal local worker still has Celery's root-user warning, and Linux parser
+resource/network restrictions are limited containment, not a complete sandbox or
+malware guarantee. Online CI verification of the eventual PR remains Step 5.7.

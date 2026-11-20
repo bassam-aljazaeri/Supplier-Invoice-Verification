@@ -3,11 +3,12 @@
 AI-assisted supplier invoice extraction, matching, review, and approval.
 
 ## Status
-The local website has Status, supplier, purchase-order, delivery-record, and
-draft-invoice pages backed by PostgreSQL. Step 3.6 adds an explicit repeatable
-fictional demo and disposable persistence verification. This milestone is a
-local manual-record application. Extraction, automatic discrepancy detection,
-and approval remain later work.
+Milestone 5 implementation and local validation are complete. The local website
+has authenticated workspaces, manual supplier/order/delivery/draft-invoice pages,
+and private document upload, background validation, status, retry and authorized
+download. Documents remain separate from invoices. **Accepted means file
+validation, not invoice approval.** OCR/extraction, automatic matching and approval
+remain later work. Pull request and online GitHub CI verification are next.
 
 Step 4.4 protects all business APIs with Cognito access-token verification and
 database workspace permissions. Identity, workspace, and membership APIs are
@@ -25,6 +26,15 @@ eligible processing retry and accepted-file attachment download. Documents remai
 separate from manual invoices. See [Documents website](#documents-website-step-55)
 and [private document APIs](#private-local-documents-step-53).
 
+**Local private storage is the normal development and CI default.** S3 is an
+optional server-side backend for a separately configured stack. Automated S3
+checks use controlled responses without AWS. Separately, the user completed a
+real private S3 upload, processing retry after the streaming-reader fix, and an
+authorized download whose SHA-256 matched the original PDF; the user reported
+removing the smoke stack/volumes, test object/bucket, IAM role and temporary
+credentials. These are recorded historical results, not checks rerun here; see
+[verification evidence](docs/progress.md) and the [S3 runbook](docs/s3-storage.md).
+
 For setup and the 10 ordered / 8 delivered / 10 invoiced demonstration, see
 [the demo guide](docs/demo.md) and [the seed instructions below](#repeatable-fictional-demo-step-36).
 
@@ -37,6 +47,67 @@ Built step by step using React, FastAPI, PostgreSQL, and Docker.
 See docs/scope.md and docs/progress.md.
 
 Only fictional or explicitly licensed sample data belongs in this repository.
+
+## Start normal local development after the S3 smoke test
+
+Use the original **local-storage development project**, not the removed smoke
+project or its generated settings/override. Do not point a database containing S3
+document references at local storage: there is no backend migration or fallback.
+The commands below target the normal project `supplier-invoice-verification`.
+If your existing development project has a deliberately different name, use that
+same name throughout so its database and document volumes are retained.
+
+Close any smoke Vite launcher and use fresh **Windows PowerShell** terminals at
+the repository root. Reuse your existing ignored root `.env` with the normal
+development PostgreSQL and public Cognito configuration. Do not carry smoke
+`POSTGRES_*`, `COGNITO_*` or `COMPOSE_*` process overrides into these terminals.
+The explicit project/file selection below avoids the smoke Compose override,
+and the process setting selects local storage without editing `.env`.
+
+```powershell
+$env:DOCUMENT_STORAGE_BACKEND = 'local'
+docker compose --project-name supplier-invoice-verification --env-file .\.env -f .\compose.yaml --profile processing up --build --detach api db redis worker dispatcher
+if ($LASTEXITCODE -ne 0) { throw 'Local services did not start' }
+docker compose --project-name supplier-invoice-verification --env-file .\.env -f .\compose.yaml --profile processing ps --all
+docker compose --project-name supplier-invoice-verification --env-file .\.env -f .\compose.yaml exec -T api alembic current
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/ready'
+```
+
+Expected: **API, PostgreSQL, Redis, worker and dispatcher** running, migration
+`0003_documents (head)`, health `ok`, readiness `ready` with database/Redis `ok`.
+The Alembic command runs inside the **Linux API container** and only reports the
+revision. No migration, seed or volume deletion is needed to resume an existing
+Milestone 5 database; older/fresh databases need the explicit migration/setup
+instructions below. The standard database and private document volumes are
+`supplier-invoice-verification_postgres_data` and
+`supplier-invoice-verification_document_data`. Keep both.
+
+In a second fresh **Windows PowerShell** terminal at the repository root, use
+your existing public browser/Cognito configuration and installed dependencies:
+
+```powershell
+Push-Location .\frontend
+Remove-Item Env:SIV_NO_ENV_FILES -ErrorAction SilentlyContinue
+Remove-Item Env:VITE_DOCUMENT_S3_ORIGIN -ErrorAction SilentlyContinue
+npm.cmd run dev
+```
+
+Open **http://localhost:5173**. The normal Vite configuration proxies `/api` to
+**http://127.0.0.1:8000**, not the former smoke port 8001. The registered Cognito
+callback remains `http://localhost:5173/auth/callback`; do not start sign-in at
+`127.0.0.1:5173`. Local downloads use the authenticated local-content route;
+`VITE_DOCUMENT_S3_ORIGIN` is unnecessary for them. Sign in and select an accessible
+workspace, or create one. Signing in alone does not grant `local-demo` membership.
+Follow the [short document demonstration](docs/demo.md#short-document-upload-demonstration).
+
+This remains a fictional local demo, not a production-ready service. The local
+worker runs as root and emits Celery's superuser warning. Parser resource/network
+restrictions provide limited containment, not a complete sandbox or malware
+guarantee. S3 orphan deletion remains disabled; no OCR/extraction is implemented.
+Older step-labelled sections below retain implementation/checkpoint history;
+[progress](docs/progress.md) separates past automated runs, user verification and
+the still-pending online CI result.
 
 ## Local backend foundation (Step 2A)
 
@@ -98,14 +169,15 @@ Vite development server; the production build needs its own API routing.
 ## Automated checks (Step 2C)
 
 `.github/workflows/ci.yml` runs for pull requests targeting `main` and pushes
-to `main`, `feat/local-foundation`, or `feat/manual-invoice-workflow`. Both jobs use GitHub-hosted Ubuntu 24.04
+to `main`, `feat/local-foundation`, `feat/manual-invoice-workflow`,
+`feat/auth-workspaces`, and `feat/document-processing`. Both jobs use GitHub-hosted Ubuntu 24.04
 runners and `contents: read` permissions. Checkout does not retain credentials.
 The official checkout and setup-node actions are pinned to verified release
 commits ([checkout v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1)
 and [setup-node v7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0)).
 
 The frontend job installs with Node.js 24 and `npm ci`, then runs lint,
-the status request tests, and the production build. The backend job builds
+all frontend tests, and the production build. The backend job builds
 the existing Dockerfile, which uses `uv sync --locked` with `backend/uv.lock`.
 It combines `compose.yaml` and `compose.ci.yaml`, generates temporary database
 settings on the runner, and uses a unique Compose project name for each run
@@ -119,7 +191,11 @@ workspace twice and runs the full demo seed twice. The shared demo checker reads
 all four documents and their lines through live HTTP, checks filtered lists and
 Swagger examples, and compares IDs, timestamps, values, and counts. It retains
 that snapshot, restarts API and PostgreSQL without removing the database volume,
-waits for recovery, and retrieves the same records to prove persistence.
+waits for recovery, and retrieves the same records to prove persistence. Private
+document uploads/bytes also survive that restart. CI then starts the actual
+worker and dispatcher, verifies validation, broker outage/message-loss recovery,
+worker interruption and bounded processing retry using private local storage.
+S3 adapter tests use controlled responses without AWS.
 It then stops its PostgreSQL and Redis containers, checks that `/health` remains HTTP 200 while `/ready` reports
 HTTP 503 with both dependencies unavailable, and restarts them to check recovery.
 Failure logs are printed, and an `always()` cleanup step removes the project's
@@ -201,8 +277,9 @@ docker compose exec -T api alembic upgrade head
 docker compose exec -T api alembic current
 ```
 
-Expect revision `0002_auth_workspaces (head)` after Step 4.3. Running `upgrade head` again is
-harmless. This applies forward schema changes to the development database and
+Expect revision `0003_documents (head)` at Milestone 5 (`0002_auth_workspaces` was
+the earlier Step 4.3 head). Running `upgrade head` again is harmless. This applies
+forward schema changes to the development database and
 retains its named volume. No workspace rows are inserted: an empty workspace
 table is expected until the explicit Step 3.3 command below is run. Do not use test cleanup or
 `alembic downgrade base` on this database. The downgrade is verified only in the
@@ -776,7 +853,7 @@ docker compose exec -T api python -m app.seed_demo
 docker compose exec -T api python -m app.seed_demo
 ```
 
-Expect `0002_auth_workspaces (head)` and a successful fictional-demo summary on
+Expect `0003_documents (head)` and a successful fictional-demo summary on
 each seed. The seed initializes the fixed workspace if missing; a separate
 `seed_workspace` run is optional. These commands intentionally write your chosen
 local demo database. Codex ran seeding only in the guarded disposable checker,
@@ -915,7 +992,7 @@ docker compose exec -T api alembic current
 docker compose exec -T api python -m app.bootstrap_membership --subject 'COPIED_COGNITO_SUB' --workspace-slug local-demo --role administrator
 ```
 
-Expect `0002_auth_workspaces (head)` and a `Membership ready` result containing
+Expect `0003_documents (head)` and a `Membership ready` result containing
 the application-user UUID, workspace UUID, and role. No subject, credentials,
 token, or connection string is printed. Existing records stay in `local-demo`
 with their current IDs and values. No reset, destructive downgrade, or volume
@@ -1430,8 +1507,9 @@ restart while the named volume is retained. Deleting that volume loses private
 files; do not use volume deletion as routine recovery. This is single-host local
 storage, not S3 policy/encryption/durability verification or a production
 financial-data service. Optional S3 configuration and offline verification are now
-available in [Step 5.6A](#optional-private-s3-storage-step-56a). Live AWS setup,
-pricing review and integration verification remain Step 5.6B.
+available in [Step 5.6A](#optional-private-s3-storage-step-56a). The user's completed
+Step 5.6B upload/retry/download and reported cleanup are recorded separately from
+automated tests in [progress](docs/progress.md).
 
 The CI override retains only its own project-scoped document volume, removes
 the development source mount and API host ports, and uses the existing synthetic
@@ -1642,7 +1720,8 @@ these process-level checks.
 
 Dependencies added: Celery Redis extra **5.7.0**, Pillow **13.0.0**, pypdf **6.21.4**
 and their locked transitive dependencies. Existing 43 package versions are preserved.
-Local checks incur no AWS charges; real S3 setup/pricing/verification stays Step 5.6.
+Local checks incur no AWS charges; the user's real S3 exercise is separate
+Step 5.6B evidence, recorded in progress rather than asserted by these tests.
 The Step 5.5 Documents website is described below. Online GitHub execution and real identity/cloud
 integration are separate from this disposable local verification.
 
@@ -1803,7 +1882,7 @@ The local Step 5.5 browser walkthrough is complete; evidence is in progress.md.
 Local storage remains the development/CI default. Do not change the storage mode
 of an existing database: its rows contain adapter-specific references, and this
 step supplies no file migration or mixed-backend lookup. Use a fresh isolated
-database/project and a dedicated S3 test prefix for the later live exercise.
+database/project and a dedicated S3 test prefix for any separately requested live exercise.
 
 | Process setting | Explicit S3 value |
 | --- | --- |
@@ -1829,8 +1908,10 @@ access denial and outages fail safely without overwriting bytes. SDK calls use
 two-second connection/read timeouts and one attempt; wrong-region redirects are
 blocked. Reads enforce the 5 MB limit and check a 15-second operation deadline
 between chunks. API storage awaits retain the existing 15-second limit and late
-upload writers retain their upload slot. Network/credential-chain behavior still
-needs live verification. See the [AWS conditional-write contract](https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/put_object.html).
+upload writers retain their upload slot. Network/credential-chain behavior is not
+proven by offline tests. The user's live upload/retry/download result is separate
+evidence, not a complete network or failure-mode certification. See the
+[AWS conditional-write contract](https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/put_object.html).
 
 Receiving-upload reconciliation still hashes bytes and uses database ownership to
 finalize or close expired reservations. Job dispatch/recovery is unchanged.
@@ -1889,5 +1970,7 @@ Added backend dependency: Boto3 **1.44.3**, with Botocore **1.44.3**, JMESPath
 **1.1.0**, s3transfer **0.19.3**, urllib3 **2.8.0** locked in `backend/uv.lock`.
 Prior locked package versions are preserved. Frontend dependencies/lockfile and
 database migrations are unchanged. Actual results are in [progress](docs/progress.md).
-Stop after Step 5.6A: real AWS setup/testing is Step 5.6B; no Textract/OCR or later
-milestone work is included.
+Step 5.6A offline implementation and the user's Step 5.6B live exercise are
+complete with the evidence/limits recorded in progress. Step 5.7 now prepares the
+pull request and online CI verification; no Textract/OCR or later milestone work
+is included. No new suite run or online CI pass is implied by this documentation.

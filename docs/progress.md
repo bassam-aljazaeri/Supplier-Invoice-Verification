@@ -1,8 +1,8 @@
 # Progress
 
-Current milestone: 5 - Private-document upload and background processing (started)
+Current milestone: 5 - Private-document upload and background processing (implementation and local validation complete)
 
-Current task: Step 5.6B live S3 verification and cleanup completed; commit pending. Next: Step 5.7 final documentation and GitHub CI.
+Current task: Step 5.7 - pull request and online CI verification
 
 Milestone 4: Completed. Existing implementation and user-verification evidence
 is retained below; this documentation checkpoint does not verify PR #3 merge
@@ -37,9 +37,13 @@ Completed:
 - Completed Step 4.4 Cognito access-token verification, workspace permissions, identity/workspace/membership APIs, and authenticated disposable HTTP checks
 - Completed Step 4.5 browser PKCE login, memory session lifecycle, workspace-aware requests, onboarding/administration UI, and synthetic frontend verification
 - Completed Milestone 4 - Authentication and workspace authorization; retained user verification below
-- Prepared the Step 5.1 private-document upload/background-processing contract; user review pending
+- Prepared the Step 5.1 private-document upload/background-processing contract; historical checkpoint retained below
 - Completed Step 5.2 document/job models, additive migration, and guarded PostgreSQL verification
 - Completed Step 5.3 bounded uploads, private local storage, scoped document/read/retry/download APIs, and isolated verification
+- Completed Step 5.4 background validation, durable dispatch and local failure recovery
+- Completed Step 5.5 Documents website and user local browser verification
+- Completed Step 5.6A optional private S3 storage and simulated AWS-free tests
+- Completed Step 5.6B user live S3 upload/retry/download verification and reported cleanup
 
 Earlier Step 2A checks (recorded previously; not rerun for Step 2B):
 - `docker compose config --quiet` passed
@@ -785,9 +789,20 @@ Step 5.6B live S3 read-failure investigation and local fix (2026-11-20):
 
 Step 5.6B user verification:
 - Real private S3 upload succeeded in an isolated smoke-test stack.
-- After the streaming-reader fix, the stored document reached Accepted.
+- After the streaming-reader fix, the user retried processing and the stored document reached Accepted.
 - The authorized S3 download succeeded.
 - Original and downloaded PDFs had identical SHA-256 hashes.
 - The isolated smoke stack and its volumes were removed.
 - The dedicated S3 test object, bucket, IAM role, and local temporary credentials were removed.
 - Online GitHub CI verification remains pending.
+
+Step 5.7 preparation (documentation and CI review only):
+- Confirmed branch `feat/document-processing` at `ffc0580` (`fix: handle released S3 response sockets at end of stream`); the working tree initially had only pre-existing untracked `Microsoft/`. Inspected the seven commits since local `main` and their diff: 79 files, 8,181 insertions and 47 deletions before this preparation. They contain the document schema/migration, bounded upload/private storage APIs, worker/dispatcher/parser/recovery, document frontend, optional S3 adapter/EOF fix, isolated tests/checker, Compose/CI and documentation. No fetch, commit, push, PR creation or online CI inspection was performed.
+- Read AGENTS.md, scope, progress, document-processing contract, demo, S3 runbook, README and `.github/workflows/ci.yml`; cross-checked documented startup with Compose and the normal Vite configuration. README now leads with current Milestone 5 status and an explicit normal-local restart after smoke cleanup: original project/settings/volumes, all five backend services with the processing profile, API port 8000, standard Vite at localhost:5173, and no migration/seed/volume deletion to resume an existing `0003_documents` database. These startup commands are instructions; they were not executed during preparation.
+- Updated `docs/demo.md` with a short fictional-file → queued/processing → Accepted → authorized-download walkthrough, pure fixture generation and SHA-256 comparison instructions. Fast state transitions may occur between polls. Accepted is structural file validation, not invoice approval; uploads do not create/extract/link invoices. Corrected stale pre-authentication wording and numeric-host browser links in the optional manual-record demo; current sign-in, workspace membership and localhost requirements now apply.
+- README, the S3 runbook and the historical document contract now distinguish normal local storage, optional S3 configuration, automated AWS-free simulations (including controlled HTTP lifecycle tests), and the user's completed live upload/retry-after-reader-fix/download with matching SHA-256 and reported cleanup. User-reported object/bucket/IAM-role/temporary-credential and smoke-stack cleanup has not been independently rechecked here. No claim is added for unreported live IAM-negative, expiry, pricing or bucket-configuration checks. Historical design/proposed wording and historical test records remain labelled as such.
+- Preserved scope/limits: no OCR/Textract/extraction, matching or approval work; S3 orphan listing/deletion remains disabled; local cleanup/recovery stays distinct; Linux parser containment is limited and not a complete sandbox/malware guarantee; the current root-user worker/Celery superuser warning remains documented. This is not described as production-ready.
+- CI already includes `feat/document-processing` in the push branch list and `pull_request` targeting `main`; frontend and backend jobs are unconditional for those events. `contents: read`, checkout `persist-credentials: false`, synthetic authentication, generated disposable database settings and the local-storage CI override remain in place; there are no AWS credentials/actions or repository-secret dependencies. **No CI edit was necessary**, so the existing actionlint container approach was not rerun for an unchanged workflow. No application, dependency, lockfile, migration, Compose or credential changes were made.
+- Historical evidence only, not rerun in this preparation: the 2026-11-20 EOF-fix check passed 92 focused storage/parser tests and the full disposable backend checker with 1,038 tests (one existing deprecation warning); the 2026-11-16 frontend run passed 265 tests, lint and build. User local browser and live S3 results are recorded separately above. Step 5.7 online CI must still verify the eventual submitted revision; prior local success is not an online CI pass.
+- Preparation checks actually performed: branch/status and seven-commit/diff review against local `main`; Markdown fence balance across all five changed documents; PowerShell AST syntax validation of **48** documentation blocks (README 40, demo 4, S3 runbook 1, progress 3), without executing their commands; **40** local link/file/heading-target checks; CI source assertions for main PRs, feature pushes, both jobs, read-only permissions, nonpersistent checkout credentials and no AWS/GitHub-secret dependency, plus the three explicit local-storage CI overrides; `git diff --check` and exact changed-file scope checks. A broad initial validator pattern incorrectly matched Python's disposable-password `secrets` module; narrowing it to GitHub secrets contexts resolved that check without any workflow edit. No actual workflow lint or online CI run is claimed.
+- Changed files: `README.md`, `docs/demo.md`, `docs/document-processing.md`, `docs/s3-storage.md`, and `docs/progress.md`. No preparation blocker or material implementation problem was found in this documentation/CI review. No full backend/frontend suite, live browser demo, development database/service operation, credential/environment-file read or AWS call was run. Application/dependency/migration/Compose/CI files and `Microsoft/` remain untouched. PR opening, commit/push, online CI verification and any later merge remain outside this preparation request.
